@@ -1,0 +1,326 @@
+
+:root {
+  --background: hsl(0 0% 100%);
+  --foreground: hsl(240 10% 3.9%);
+  --primary: hsl(231 48% 48%);
+  --primary-foreground: hsl(0 0% 98%);
+  --primary-hover: hsl(231, 40%, 55%);
+  --secondary: hsl(240 4.8% 95.9%);
+  --secondary-foreground: hsl(240 5.9% 10%);
+  --accent: hsl(207 90% 54%);
+  --accent-hover: hsl(207, 95%, 60%);
+  --muted: hsl(240 3.8% 46.1%);
+  --muted-background: hsl(240 4.8% 95.9%);
+  --border: hsl(240 5.9% 90%);
+  --input: hsl(240 5.9% 90%);
+  --card: hsl(0 0% 100%);
+  --radius: 0.5rem;
+  --destructive: hsl(0 84.2% 60.2%);
+  --destructive-foreground: hsl(0 0% 98%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: hsl(240 10% 3.9%);
+    --foreground: hsl(0 0% 98%);
+    --primary: hsl(231 48% 48%);
+    --primary-foreground: hsl(0 0% 98%);
+    --primary-hover: hsl(231, 40%, 55%);
+    --secondary: hsl(240 3.7% 15.9%);
+    --secondary-foreground: hsl(0 0% 98%);
+    --accent: hsl(207 90% 54%);
+    --accent-hover: hsl(207, 95%, 60%);
+    --muted: hsl(0 0% 63.9%);
+    --muted-background: hsl(240 3.7% 15.9%);
+    --border: hsl(240 3.7% 15.9%);
+    --input: hsl(240 3.7% 15.9%);
+    --card: hsl(240, 4%, 10%);
+    --destructive: #ef4444;
+  }
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  width: 340px;
+  margin: 0;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-size: 14px;
+}
+
+.container {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.logo {
+  width: 28px;
+  height: 28px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--foreground);
+}
+
+h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--foreground);
+}
+
+p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 4px 0 0 0;
+  line-height: 1.4;
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 10px 16px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s ease-in-out;
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  width: 100%;
+}
+
+button:hover {
+  background-color: var(--primary-hover);
+}
+button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background-color: var(--secondary);
+  color: var(--secondary-foreground);
+  border-color: var(--border);
+}
+button.secondary:hover {
+  background-color: var(--muted-background);
+}
+
+
+.logout-button {
+  background-color: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+}
+.logout-button:hover {
+  background-color: var(--destructive);
+  color: var(--destructive-foreground);
+  border-color: var(--destructive);
+}
+
+
+.status-text {
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 16px;
+  text-align: center;
+  margin-top: 8px;
+}
+.error-text {
+  color: var(--destructive);
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background-color: var(--card);
+}
+
+li {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+li:last-child {
+  border-bottom: none;
+}
+li.no-tabs-message {
+  color: var(--muted);
+  justify-content: center;
+}
+
+li img {
+  width: 16px;
+  height: 16px;
+  margin-right: 12px;
+}
+
+li span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-grow: 1;
+}
+
+.view {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 16px;
+}
+.view.active {
+    display: flex;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-group label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--foreground);
+}
+
+.form-group input {
+    padding: 10px 12px;
+    border: 1px solid var(--input);
+    border-radius: var(--radius);
+    font-size: 14px;
+    background-color: var(--card);
+    color: var(--foreground);
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px hsla(231, 48%, 48%, 0.2);
+}
+
+.user-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  background-color: var(--muted-background);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+}
+.user-info strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* Tabs */
+.tabs-nav {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-button {
+  flex: 1;
+  padding: 10px;
+  background-color: transparent;
+  color: var(--muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  border-radius: 0;
+  font-weight: 500;
+  transition: all 0.2s ease-in-out;
+  width: 50%; /* override full width */
+}
+.tab-button:hover {
+  background-color: var(--card);
+  color: var(--primary);
+}
+.tab-button.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.tab-content {
+  display: none;
+  padding: 16px 0 0 0;
+  flex-direction: column;
+  gap: 16px;
+}
+.tab-content.active {
+  display: flex;
+}
+
+.button-group {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.setting-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+}
+.setting-item label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+/* Simple toggle switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  background-color: var(--muted-background);
+  border-radius: 11px;
+  transition: background-color 0.2s;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+}
+.toggle-switch::before {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: white;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s;
+}
+.toggle-switch:checked {
+  background-color: var(--primary);
+}
+.toggle-switch:checked::before {
+  transform: translateX(18px);
+}

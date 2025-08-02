@@ -1,0 +1,47 @@
+
+{
+  "manifest_version": 3,
+  "name": "Replica",
+  "version": "1.0",
+  "description": "Sync your open tabs across devices.",
+  "permissions": ["tabs", "storage", "scripting", "bookmarks"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "images/icon16.png",
+      "48": "images/icon48.png",
+      "128": "images/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "images/icon16.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
+  },
+  "commands": {
+    "toggle-search": {
+      "suggested_key": {
+        "default": "Alt+L",
+        "mac": "Alt+L"
+      },
+      "description": "Open Replica Search"
+    },
+    "add-to-favorites": {
+      "suggested_key": {
+        "default": "Alt+Shift+F",
+        "mac": "Alt+Shift+F"
+      },
+      "description": "Add Highlighted Tab to Favorites"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["spotlight.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

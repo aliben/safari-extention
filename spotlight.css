@@ -1,0 +1,362 @@
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: transparent;
+  color: #EAEAEA;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+}
+
+@keyframes gradient-flow {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+#spotlight-wrapper {
+    margin-top: 15vh;
+    position: relative;
+    width: 100%;
+    max-width: 640px;
+    border-radius: 14px;
+    /* box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4); */
+    padding: 2px; /* This padding will determine the border thickness */
+    background-color: transparent; /* The wrapper itself is transparent */
+}
+
+#spotlight-wrapper::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: inherit; /* Use the parent's border-radius */
+    background: linear-gradient(90deg, #E950D9, #F5A623, #F5D023, #E950D9);
+    background-size: 200% 200%;
+    animation: gradient-flow 4s ease infinite;
+    z-index: -1; /* Place the gradient behind the main content */
+}
+
+#spotlight-container {
+  width: 100%;
+  background-color: rgba(30, 30, 30, 0.8); /* Made more transparent */
+  border-radius: 12px; /* This should be wrapper's radius minus the padding */
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  position: relative;
+  overflow: hidden; /* To clip the content to the border-radius */
+  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4);
+}
+
+#search-box {
+  display: flex;
+  align-items: center;
+  padding: 12px 12px 12px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 12px;
+}
+
+#search-icon {
+  width: 22px;
+  height: 22px;
+  color: #9E9E9E;
+  flex-shrink: 0;
+}
+
+#search-pill {
+  background-color: #007AFF;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  margin-right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#search-pill.hidden {
+  display: none;
+}
+#search-pill .close-pill {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  color: rgba(255,255,255,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#search-pill .close-pill:hover {
+  color: white;
+}
+#search-pill .close-pill svg {
+    width: 100%;
+    height: 100%;
+}
+
+
+#search-input {
+  flex-grow: 1;
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 20px;
+  color: #FFFFFF;
+  font-weight: 500;
+}
+
+#search-input::placeholder {
+  color: #757575;
+  font-weight: 500;
+}
+
+#device-filter-container {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#device-filter-list {
+    display: flex;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 8px; /* For scrollbar spacing */
+    scrollbar-width: thin;
+    scrollbar-color: #555 #333;
+}
+
+#device-filter-list::-webkit-scrollbar {
+    height: 6px;
+}
+#device-filter-list::-webkit-scrollbar-track {
+    background: #333;
+    border-radius: 3px;
+}
+#device-filter-list::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 3px;
+}
+
+.device-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.7);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    white-space: nowrap;
+    border: 1px solid transparent;
+}
+.device-pill:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.9);
+}
+.device-pill.selected {
+    background-color: #007AFF;
+    color: white;
+    border-color: rgba(0, 122, 255, 0.8);
+}
+.device-pill .tab-count {
+    font-size: 11px;
+    background-color: rgba(0,0,0,0.2);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+.device-pill.selected .tab-count {
+    background-color: rgba(255,255,255,0.2);
+}
+
+#sort-container {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.sort-button {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.7);
+    padding: 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    border: 1px solid transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.sort-button svg {
+  width: 18px;
+  height: 18px;
+}
+.sort-button:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.9);
+}
+.sort-button.active {
+    background-color: #007AFF;
+    color: white;
+    border-color: rgba(0, 122, 255, 0.8);
+}
+
+
+#results-container {
+  overflow-y: auto;
+  padding: 8px;
+}
+
+#results-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.result-item {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  position: relative;
+  overflow: hidden; /* Hide the pseudo-element when it's off-screen */
+}
+
+/* The animated border */
+.result-item::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, #E950D9, #F5A623, #03A9F4);
+    transform: translateX(-101%);
+    transition: transform 0.3s ease-in-out;
+}
+
+.result-item.selected {
+  background-color: rgba(74, 85, 104, 0.2); /* A neutral, modern gray */
+  color: white;
+}
+
+/* Slide the animated border in on selection */
+.result-item.selected::after {
+    transform: translateX(0);
+}
+
+.result-item.selected .result-url,
+.result-item.selected .result-device {
+  color: rgba(255, 255, 255, 0.85);
+}
+.result-item.selected .result-title {
+  color: #FFFFFF;
+}
+
+.favicon {
+  width: 20px;
+  height: 20px;
+  margin-right: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.result-details {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.result-title {
+  font-size: 15px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  color: #EAEAEA;
+  transition: color 0.15s ease-in-out;
+}
+
+.result-title .favorite-icon {
+    width: 14px;
+    height: 14px;
+    margin-right: 8px;
+    color: #FFD700; /* Gold color for the star */
+    flex-shrink: 0;
+}
+
+.result-url {
+  font-size: 12px;
+  color: #9E9E9E;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  margin-top: 2px;
+  transition: color 0.15s ease-in-out;
+}
+
+.result-device {
+    margin-left: auto;
+    font-size: 11px;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.7);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+    flex-shrink: 0;
+    transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out;
+}
+
+.copied-feedback {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #007AFF;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    border-radius: 8px;
+    z-index: 10;
+}
+
+#spotlight-footer {
+  padding: 8px 16px;
+  font-size: 11px;
+  color: #9E9E9E;
+  text-align: right;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.key-combo {
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-weight: 500;
+  margin: 0 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.key-combo svg {
+  width: 12px;
+  height: 12px;
+  color: #c7c7c7;
+}
+
+    

@@ -1,0 +1,49 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Replica Search</title>
+  <link rel="stylesheet" href="spotlight.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="spotlight-wrapper">
+    <div id="spotlight-container">
+      <div id="search-box">
+        <svg id="search-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <div id="search-pill" class="hidden"></div>
+        <input type="text" id="search-input" placeholder="Search tabs or type f + space for favorites..." autocomplete="off">
+        <div id="sort-container">
+          <button class="sort-button active" data-sort="timestamp" title="Sort by Date">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          </button>
+          <button class="sort-button" data-sort="alpha" title="Sort Alphabetically">
+             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 4-4 4 4"></path><path d="M7 4v16"></path><path d="M20 8h-5"></path><path d="M15 10V6.5a2.5 2.5 0 0 1 5 0V10"></path><path d="M15 14h5l-5 6h5"></path></svg>
+          </button>
+        </div>
+      </div>
+      <div id="device-filter-container">
+        <div id="device-filter-list">
+          <!-- Device pills will be injected here -->
+        </div>
+      </div>
+      <div id="results-container">
+        <ul id="results-list"></ul>
+      </div>
+      <div id="spotlight-footer">
+          Navigate with
+          <span class="key-combo"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></span>
+          /
+          <span class="key-combo"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>,
+          <span class="key-combo">Enter</span> to open,
+          <span class="key-combo">Cmd+C</span> to copy,
+          <span class="key-combo">Shift+Alt+F</span> to favorite,
+          <span class="key-combo">Esc</span> to close.
+        </div>
+    </div>
+  </div>
+  <script src="spotlight.js"></script>
+</body>
+</html>
