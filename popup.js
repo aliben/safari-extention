@@ -42,6 +42,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveKeyButton = document.getElementById('saveKeyButton');
     const keyStatusEl = document.getElementById('key-status');
 
+    // Shortcuts
+    const manageShortcutsButton = document.getElementById('manageShortcutsButton');
+    const spotlightShortcutInput = document.getElementById('spotlightShortcut');
+    const favoriteShortcutInput = document.getElementById('favoriteShortcut');
+
     const showView = (viewToShow) => {
         allViews.forEach(view => view.classList.remove('active'));
         viewToShow.classList.add('active');
@@ -94,6 +99,20 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
+    const loadShortcuts = () => {
+        if (chrome.commands) {
+            chrome.commands.getAll((commands) => {
+                for (const command of commands) {
+                    if (command.name === 'toggle-search') {
+                        spotlightShortcutInput.value = command.shortcut || 'Not set';
+                    } else if (command.name === 'add-to-favorites') {
+                        favoriteShortcutInput.value = command.shortcut || 'Not set';
+                    }
+                }
+            });
+        }
+    };
+
     // Initialization
     chrome.storage.sync.get(['apiUrl', 'userId', 'deviceName', 'os'], (result) => {
         if (result.apiUrl) {
@@ -104,6 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 showView(mainContent);
                 switchTab('tabs-panel');
                 listCurrentTabs();
+                loadShortcuts();
             } else {
                 showView(authSection);
             }
@@ -184,32 +204,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     generateKeyButton.addEventListener('click', () => {
-        if (typeof nacl === 'undefined') {
-            keyStatusEl.textContent = 'Encryption functions not available.';
+        if (typeof nacl === 'undefined' || !nacl.util) {
+            keyStatusEl.textContent = 'Encryption library not loaded.';
             return;
         }
-        function encodeBase64(arr) {
-            return btoa(String.fromCharCode.apply(null, arr));
-        }
+        const { encodeBase64 } = nacl.util;
         const key = encodeBase64(nacl.randomBytes(nacl.secretbox.keyLength));
         secretKeyInput.value = key;
         keyStatusEl.textContent = 'New key generated. Click "Save Key".';
     });
 
     saveKeyButton.addEventListener('click', () => {
-        if (typeof nacl === 'undefined') {
-            keyStatusEl.textContent = 'Encryption functions not available.';
+        if (typeof nacl === 'undefined' || !nacl.util) {
+            keyStatusEl.textContent = 'Encryption library not loaded.';
             return;
         }
-        function decodeBase64(str) {
-            var binary = atob(str);
-            var len = binary.length;
-            var bytes = new Uint8Array(len);
-            for (var i = 0; i < len; i++) {
-                bytes[i] = binary.charCodeAt(i);
-            }
-            return bytes;
-        }
+        const { decodeBase64 } = nacl.util;
         const key = secretKeyInput.value.trim();
         if (key) {
             // Basic validation: Check if it's a valid Base64 string of the right length
@@ -236,5 +246,10 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             keyStatusEl.textContent = 'Secret key cannot be empty.';
         }
+    });
+
+    // --- Shortcut Listeners ---
+    manageShortcutsButton.addEventListener('click', () => {
+        chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
     });
 });

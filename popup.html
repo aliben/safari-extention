@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-
+  <script src="./lib/tweetnacl.min.js"></script>
 </head>
 <body>
   <div class="container">
@@ -71,6 +71,11 @@
               <label for="deviceNameInput">Device Name</label>
               <input type="text" id="deviceNameInput" placeholder="e.g., Work Laptop">
           </div>
+           <button id="saveSettingsButton">Save Device Name</button>
+          <p id="settings-status" class="status-text"></p>
+
+          <hr class="separator">
+
           <div class="setting-item">
             <label for="encryptionToggle">Enable End-to-End Encryption</label>
             <input type="checkbox" id="encryptionToggle" class="toggle-switch">
@@ -84,16 +89,31 @@
               </div>
               <p id="key-status" class="status-text"></p>
           </div>
-          <hr style="border-color: var(--border); border-top-width: 1px; margin: 16px 0;">
+          <hr class="separator">
+          
+          <div class="form-group">
+              <div class="setting-header">
+                <h2>Shortcuts</h2>
+                <button id="manageShortcutsButton" class="secondary" style="width: auto; padding: 4px 12px;">Manage</button>
+              </div>
+              <div class="shortcut-item">
+                  <label for="spotlightShortcut">Toggle Spotlight</label>
+                  <input type="text" id="spotlightShortcut" readonly>
+              </div>
+               <div class="shortcut-item">
+                  <label for="favoriteShortcut">Add Favorite</label>
+                  <input type="text" id="favoriteShortcut" readonly>
+              </div>
+          </div>
+
+          <hr class="separator">
+
           <button id="toggleSpotlightButton">Toggle Spotlight Bar</button>
-          <button id="saveSettingsButton">Save Device Name</button>
-          <p id="settings-status" class="status-text"></p>
         </div>
       </div>
     </div>
     
   </div>
-  <script src="./lib/tweetnacl.min.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
