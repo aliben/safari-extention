@@ -20,9 +20,9 @@ body {
     width: 100%;
     max-width: 640px;
     border-radius: 14px;
-    /* box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4); */
+    box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4);
     padding: 2px; /* This padding will determine the border thickness */
-    background-color: transparent; /* The wrapper itself is transparent */
+    background-color: transparent !important; /* The wrapper itself is transparent */
 }
 
 #spotlight-wrapper::before {
@@ -33,7 +33,7 @@ body {
     right: 0;
     bottom: 0;
     border-radius: inherit; /* Use the parent's border-radius */
-    background: linear-gradient(90deg, #E950D9, #F5A623, #F5D023, #E950D9);
+    //background: linear-gradient(90deg, #E950D9, #F5A623, #F5D023, #E950D9);
     background-size: 200% 200%;
     animation: gradient-flow 4s ease infinite;
     z-index: -1; /* Place the gradient behind the main content */
@@ -50,7 +50,6 @@ body {
   max-height: 70vh;
   position: relative;
   overflow: hidden; /* To clip the content to the border-radius */
-  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4);
 }
 
 #search-box {

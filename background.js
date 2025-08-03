@@ -1,38 +1,128 @@
 
 // This is the background service worker for the extension.
+self.importScripts('./lib/tweetnacl.min.js');
 
+// --- IndexedDB for Keys ---
+const DB_NAME = 'ReplicaCryptoDB';
+const DB_VERSION = 1;
+const KEY_STORE_NAME = 'keys';
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(KEY_STORE_NAME)) {
+        db.createObjectStore(KEY_STORE_NAME, { keyPath: 'id' });
+      }
+    };
+  });
+}
+
+async function saveKey(keyObject) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(KEY_STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(KEY_STORE_NAME);
+    const request = store.put(keyObject);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getKey(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(KEY_STORE_NAME, 'readonly');
+    const store = transaction.objectStore(KEY_STORE_NAME);
+    const request = store.get(id);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function deleteKey(id) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(KEY_STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(KEY_STORE_NAME, 'readwrite');
+        const request = store.delete(id);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+    });
+}
+
+
+// --- Encoding Helpers ---
+function encodeUTF8(str) {
+    return new TextEncoder().encode(str);
+}
+function decodeUTF8(arr) {
+    return new TextDecoder().decode(arr);
+}
+function encodeBase64(arr) {
+    return btoa(String.fromCharCode.apply(null, arr));
+}
+function decodeBase64(str) {
+    var binary = atob(str);
+    var len = binary.length;
+    var bytes = new Uint8Array(len);
+    for (var i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
+function encryptSymmetric(message, keyB64) {
+    if (!keyB64) return message;
+    const key = decodeBase64(keyB64);
+    const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+    const messageUint8 = encodeUTF8(JSON.stringify(message));
+    const box = nacl.secretbox(messageUint8, nonce, key);
+    const fullMessage = new Uint8Array(nonce.length + box.length);
+    fullMessage.set(nonce);
+    fullMessage.set(box, nonce.length);
+    return encodeBase64(fullMessage);
+}
+
+function decryptSymmetric(messageWithNonceB64, keyB64) {
+    if (!keyB64) return messageWithNonceB64;
+    try {
+        const key = decodeBase64(keyB64);
+        const messageWithNonce = decodeBase64(messageWithNonceB64);
+        const nonce = messageWithNonce.slice(0, nacl.secretbox.nonceLength);
+        const message = messageWithNonce.slice(nacl.secretbox.nonceLength);
+        const decrypted = nacl.secretbox.open(message, nonce, key);
+        if (!decrypted) throw new Error("Failed to decrypt symmetric message");
+        return JSON.parse(decodeUTF8(decrypted));
+    } catch (e) {
+        console.error("Decryption failed:", e);
+        // Return a structure that indicates failure but doesn't crash the app
+        return { title: "[Decryption Failed]", url: "about:blank" };
+    }
+}
+
+// --- Main Extension Logic ---
 let syncTimeout;
-let allTabsCache = []; // In-memory cache for all synced tabs
+let allTabsCache = [];
+let allBookmarksCache = [];
 
-// Function to generate a unique ID for the device
-const generateUniqueId = () => {
-    return 'device-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
-};
+const generateUniqueId = () => 'device-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
 
-// Function to determine device type
 const getDeviceType = (os = '', deviceName = '') => {
     const lowerOs = os.toLowerCase();
     const lowerDeviceName = deviceName.toLowerCase();
-
-    if (lowerOs.includes('android') || lowerDeviceName.includes('phone') || lowerDeviceName.includes('pixel') || lowerDeviceName.includes('iphone')) {
-        return 'phone';
-    }
-    // Assume computer for others like win, mac, linux, cros
+    if (lowerOs.includes('android') || lowerDeviceName.includes('phone') || lowerDeviceName.includes('pixel') || lowerDeviceName.includes('iphone')) return 'phone';
     return 'computer';
 };
 
-
-// Function to handle commands received from the server
 const handleCommands = (commands) => {
-    if (!commands || commands.length === 0) {
-        return;
-    }
-
+    if (!commands || commands.length === 0) return;
     console.log(`Received ${commands.length} command(s) from server.`);
-
     for (const command of commands) {
         if (command.type === 'OPEN_TABS' && command.payload?.urls) {
-            console.log('Executing OPEN_TABS command for URLs:', command.payload.urls);
             for (const url of command.payload.urls) {
                 chrome.tabs.create({ url: url, active: false });
             }
@@ -40,165 +130,186 @@ const handleCommands = (commands) => {
     }
 };
 
-// Function to get bookmarks recursively, preserving structure
-const getBookmarks = (tree) => {
-    // The tree from chrome.bookmarks.getTree() is already in the format we want.
-    // We just need to filter out the root node if it's a container with no real title.
-    if (tree.length > 0 && tree[0].children) {
-        return tree[0].children;
-    }
-    return tree;
-};
+const getBookmarks = (tree) => (tree.length > 0 && tree[0].children) ? tree[0].children : tree;
 
+function recursiveEncryptBookmarks(nodes, symmetricKey) {
+    return nodes.map(node => {
+        const payload = { title: node.title };
+        if (node.url) payload.url = node.url;
 
-// Function to get all tabs and send them to the backend
-const syncTabs = async () => {
-  console.log('Syncing tabs...');
-  try {
-    const { apiUrl, deviceName, os, userId } = await chrome.storage.sync.get(['apiUrl', 'deviceName', 'os', 'userId']);
-    const localData = await chrome.storage.local.get('persistentDeviceId');
-    const finalDeviceId = localData.persistentDeviceId;
+        const encryptedNode = {
+            id: node.id,
+            isEncrypted: true,
+            payload: encryptSymmetric(payload, symmetricKey),
+        };
 
-    if (!apiUrl) {
-      console.log('Backend URL not set. Skipping sync.');
-      return { status: 'failure', message: 'Backend URL not set.' };
-    }
-    
-    if (!userId) {
-      console.log('User not logged in. Skipping sync.');
-      return { status: 'failure', message: 'User not logged in.' };
-    }
-
-    if (!finalDeviceId) {
-      console.log('Device ID not set. This should not happen after installation.');
-      return { status: 'failure', message: 'Device ID not found.' };
-    }
-
-    // Get Tabs
-    const tabs = await chrome.tabs.query({});
-    const finalDeviceName = deviceName || 'Chrome Browser'; 
-    const tabsPayload = tabs
-      .filter(tab => tab.url && !tab.url.startsWith('chrome://'))
-      .map(tab => ({
-        id: `${tab.windowId}-${tab.id}`,
-        title: tab.title,
-        url: tab.url,
-        faviconUrl: tab.favIconUrl,
-        windowId: tab.windowId,
-        timestamp: Date.now(),
-      }));
-    
-    // Get Bookmarks
-    const bookmarkTree = await chrome.bookmarks.getTree();
-    const bookmarksPayload = getBookmarks(bookmarkTree);
-
-    const finalUrl = new URL('/api/sync', apiUrl).href;
-
-    const response = await fetch(finalUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-          tabs: tabsPayload, 
-          bookmarks: bookmarksPayload,
-          deviceId: finalDeviceId, 
-          deviceName: finalDeviceName, 
-          os, 
-          userId 
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    console.log('Sync successful:', data);
-
-    // Cache all tabs for spotlight search
-    if (data.remoteTabs) {
-        allTabsCache = [...tabsPayload.map(t => ({...t, os, deviceName: 'This Device', deviceId: finalDeviceId})), ...data.remoteTabs];
-    } else {
-        allTabsCache = [...tabsPayload.map(t => ({...t, os, deviceName: 'This Device', deviceId: finalDeviceId}))];
-    }
-
-    // Handle any commands from the server
-    if (data.commands) {
-      handleCommands(data.commands);
-    }
-
-    return { status: 'success', count: tabsPayload.length, bookmarksCount: bookmarksPayload.length };
-
-  } catch (error) {
-    console.error('Error syncing data:', error);
-    return { status: 'failure', message: error.message };
-  }
-};
-
-// Debounced sync function to avoid spamming the server
-const debouncedSync = () => {
-  clearTimeout(syncTimeout);
-  syncTimeout = setTimeout(syncTabs, 1000); // 1-second debounce
-};
-
-// Store platform info and persistent ID on installation/startup
-const initializeExtensionState = () => {
-    chrome.runtime.getPlatformInfo(info => {
-        chrome.storage.sync.set({ os: info.os });
-    });
-    chrome.storage.local.get('persistentDeviceId', (data) => {
-        if (!data.persistentDeviceId) {
-            const newId = generateUniqueId();
-            chrome.storage.local.set({ persistentDeviceId: newId }, () => {
-                console.log('New persistent device ID generated:', newId);
-            });
-        } else {
-            console.log('Existing persistent device ID found:', data.persistentDeviceId);
+        if (node.children) {
+            encryptedNode.children = recursiveEncryptBookmarks(node.children, symmetricKey);
         }
+        return encryptedNode;
     });
-};
-
-chrome.runtime.onStartup.addListener(() => {
-    initializeExtensionState();
-    syncTabs(); // Sync on startup
-});
-
-chrome.runtime.onInstalled.addListener(() => {
-    initializeExtensionState();
-});
-
-// Reusable function to toggle spotlight
-async function toggleSpotlight() {
-  // Sync tabs to ensure data is fresh when spotlight opens
-  syncTabs();
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab && tab.id) {
-    try {
-      await chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_SPOTLIGHT" });
-    } catch (err) {
-      console.error('Failed to send toggle message to content script. Injecting script first.', err);
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          files: ['content.js']
-        });
-        // Now send the message again after successful injection
-        await chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_SPOTLIGHT" });
-      } catch(injectErr) {
-         console.error('Failed to inject content script:', injectErr);
-      }
-    }
-  }
 }
 
-// Listen for tab events
-chrome.tabs.onCreated.addListener(debouncedSync);
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // We only sync on status complete to avoid multiple syncs per page load
-  if (changeInfo.status === 'complete' || changeInfo.title) {
-    debouncedSync();
-  }
+function recursiveDecryptBookmarks(nodes, symmetricKey) {
+    if (!nodes || !Array.isArray(nodes)) return [];
+    return nodes.map(node => {
+        let decryptedNode = { ...node };
+        if (node.isEncrypted && node.payload) {
+            const decryptedPayload = decryptSymmetric(node.payload, symmetricKey);
+            decryptedNode = { ...node, ...decryptedPayload, isEncrypted: true };
+        }
+        if (decryptedNode.children) {
+            decryptedNode.children = recursiveDecryptBookmarks(decryptedNode.children, symmetricKey);
+        }
+        return decryptedNode;
+    });
+}
+
+
+const syncTabs = async () => {
+    console.log('Syncing tabs...');
+    try {
+        const { apiUrl, deviceName, os, userId } = await chrome.storage.sync.get(['apiUrl', 'deviceName', 'os', 'userId']);
+        const { persistentDeviceId } = await chrome.storage.local.get('persistentDeviceId');
+        const keyInfo = await getKey('symmetricKey');
+        const symmetricKey = keyInfo ? keyInfo.key : null;
+
+        if (!apiUrl || !userId || !persistentDeviceId) {
+            console.log('Backend URL, UserID, or DeviceID not set. Skipping sync.');
+            return { status: 'failure', message: 'Configuration missing.' };
+        }
+
+        const tabs = await chrome.tabs.query({});
+        let tabsPayload = tabs
+            .filter(tab => tab.url && !tab.url.startsWith('chrome://'))
+            .map(tab => ({
+                id: `${tab.windowId}-${tab.id}`,
+                title: tab.title,
+                url: tab.url,
+                faviconUrl: tab.favIconUrl,
+                windowId: tab.windowId,
+                timestamp: Date.now(),
+            }));
+        
+        if (symmetricKey) {
+            tabsPayload = tabsPayload.map(tab => ({
+                id: tab.id,
+                isEncrypted: true,
+                payload: encryptSymmetric({
+                    title: tab.title,
+                    url: tab.url,
+                    faviconUrl: tab.faviconUrl,
+                    windowId: tab.windowId,
+                    timestamp: tab.timestamp,
+                }, symmetricKey),
+            }));
+        }
+
+        const bookmarkTree = await chrome.bookmarks.getTree();
+        let bookmarksPayload = getBookmarks(bookmarkTree);
+        if (symmetricKey) {
+            bookmarksPayload = recursiveEncryptBookmarks(bookmarksPayload, symmetricKey);
+        }
+
+        const finalUrl = new URL('/api/sync', apiUrl).href;
+        const response = await fetch(finalUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tabs: tabsPayload,
+                bookmarks: bookmarksPayload,
+                deviceId: persistentDeviceId,
+                deviceName: deviceName || 'Chrome Browser',
+                os,
+                userId
+            }),
+        });
+
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const data = await response.json();
+        console.log('Sync successful:', data);
+
+        // Decrypt and cache data
+        const localTabsForCache = tabsPayload.map(t => {
+            const content = symmetricKey && t.isEncrypted ? decryptSymmetric(t.payload, symmetricKey) : t;
+            return { ...content, id: t.id, os, deviceName: 'This Device', deviceId: persistentDeviceId };
+        });
+
+        const remoteTabsForCache = (data.remoteTabs || []).map(t => {
+            const content = symmetricKey && t.isEncrypted ? decryptSymmetric(t.payload, symmetricKey) : t;
+            return { ...content, id: t.id, deviceId: t.deviceId, deviceName: t.deviceName, os: t.os };
+        });
+
+        allTabsCache = [...localTabsForCache, ...remoteTabsForCache];
+        
+        const remoteBookmarksForCache = [];
+        if (data.remoteBookmarks && typeof data.remoteBookmarks === 'object') {
+            for (const deviceId in data.remoteBookmarks) {
+                const deviceBookmarks = data.remoteBookmarks[deviceId];
+                const decryptedBookmarks = symmetricKey ? recursiveDecryptBookmarks(deviceBookmarks, symmetricKey) : deviceBookmarks;
+                remoteBookmarksForCache.push(...decryptedBookmarks);
+            }
+        }
+        allBookmarksCache = remoteBookmarksForCache;
+        
+        if (data.commands) handleCommands(data.commands);
+        return { status: 'success' };
+    } catch (error) {
+        console.error('Error syncing data:', error);
+        return { status: 'failure', message: error.message };
+    }
+};
+
+const debouncedSync = () => {
+    clearTimeout(syncTimeout);
+    syncTimeout = setTimeout(syncTabs, 1000);
+};
+
+const initializeExtensionState = () => {
+    return new Promise((resolve) => {
+        chrome.runtime.getPlatformInfo(info => {
+            chrome.storage.sync.set({ os: info.os }, () => {
+                chrome.storage.local.get('persistentDeviceId', (data) => {
+                    if (!data.persistentDeviceId) {
+                        chrome.storage.local.set({ persistentDeviceId: generateUniqueId() }, resolve);
+                    } else {
+                        resolve();
+                    }
+                });
+            });
+        });
+    });
+};
+
+async function toggleSpotlight() {
+    await syncTabs();
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && tab.id) {
+        try {
+            await chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_SPOTLIGHT" });
+        } catch (err) {
+            console.log("Content script not injected yet, injecting now.");
+            await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+            await chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_SPOTLIGHT" });
+        }
+    }
+}
+
+// --- Event Listeners ---
+chrome.runtime.onInstalled.addListener(async (details) => {
+    console.log('Extension installed or updated:', details.reason);
+    await initializeExtensionState();
+    await syncTabs();
 });
+
+chrome.runtime.onStartup.addListener(async () => {
+    console.log('Extension started.');
+    await initializeExtensionState();
+    await syncTabs();
+});
+
+chrome.tabs.onCreated.addListener(debouncedSync);
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => { if (changeInfo.status === 'complete' || changeInfo.title || changeInfo.url) debouncedSync(); });
 chrome.tabs.onRemoved.addListener(debouncedSync);
 chrome.tabs.onReplaced.addListener(debouncedSync);
 chrome.bookmarks.onCreated.addListener(debouncedSync);
@@ -208,133 +319,55 @@ chrome.bookmarks.onMoved.addListener(debouncedSync);
 chrome.bookmarks.onChildrenReordered.addListener(debouncedSync);
 chrome.bookmarks.onImportEnded.addListener(debouncedSync);
 
-
-// Listen for messages from popup or content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'SYNC_TABS') {
-    syncTabs().then(sendResponse);
-    return true; // Indicates that the response is sent asynchronously
-  } else if (request.type === 'GET_DEVICES') {
-    const devices = allTabsCache.reduce((acc, tab) => {
-        if (!acc[tab.deviceId]) {
-            acc[tab.deviceId] = { 
-                id: tab.deviceId, 
-                name: tab.deviceName,
-                type: getDeviceType(tab.os, tab.deviceName),
-                count: 0 
-            };
-        }
-        acc[tab.deviceId].count++;
-        return acc;
-    }, {});
-    sendResponse(Object.values(devices));
-    return true;
-  } else if (request.type === 'SEARCH_TABS') {
-    const query = request.query.toLowerCase();
-    const deviceIds = request.deviceIds || [];
-    const sortBy = request.sortBy || 'timestamp';
-
-    chrome.storage.sync.get(['showThisDeviceInSpotlight'], async (settings) => {
-        const localData = await chrome.storage.local.get('persistentDeviceId');
-        const localDeviceId = localData.persistentDeviceId;
-        const showThisDevice = settings.showThisDeviceInSpotlight !== false; // default to true
-
-        let filteredTabs = allTabsCache;
-        
-        // Filter out local device if setting is false
-        if (!showThisDevice) {
-            filteredTabs = filteredTabs.filter(tab => tab.deviceId !== localDeviceId);
-        }
-
-        if(deviceIds.length > 0) {
-            filteredTabs = filteredTabs.filter(tab => deviceIds.includes(tab.deviceId));
-        }
-
-        if (query) {
-             filteredTabs = filteredTabs.filter(tab => 
-                tab.title.toLowerCase().includes(query) || tab.url.toLowerCase().includes(query)
-            );
-        }
-
-        // Sort results
-        filteredTabs.sort((a, b) => {
-            switch (sortBy) {
-                case 'alpha-asc':
-                    return a.title.localeCompare(b.title);
-                case 'alpha-desc':
-                    return b.title.localeCompare(a.title);
-                case 'timestamp':
-                default:
-                    return (b.timestamp || 0) - (a.timestamp || 0);
-            }
-        });
-        
-        sendResponse(filteredTabs.slice(0, 50));
-    });
-    return true; // async
-
-  } else if (request.type === 'SEARCH_FAVORITES') {
-    const query = request.query.toLowerCase();
-    chrome.storage.sync.get(['apiUrl', 'userId']).then(({ apiUrl, userId }) => {
-        if (!apiUrl || !userId) {
-            sendResponse([]);
-            return;
-        }
-        const favUrl = new URL('/api/favorites', apiUrl).href;
-        fetch(`${favUrl}?userId=${encodeURIComponent(userId)}`)
-            .then(res => res.json())
-            .then(data => {
-                const favorites = data.favorites || [];
-                const results = favorites.filter(tab => 
-                    tab.title.toLowerCase().includes(query) || tab.url.toLowerCase().includes(query)
-                );
-                sendResponse(results.slice(0, 10));
-            })
-            .catch(err => {
-                console.error('Failed to fetch favorites:', err);
-                sendResponse([]);
-            });
-    });
-    return true; // async
-  } else if (request.type === 'OPEN_TAB') {
-    chrome.tabs.create({ url: request.url, active: true });
-  } else if (request.type === 'TRIGGER_SPOTLIGHT_TOGGLE') {
-    toggleSpotlight().then(() => sendResponse({status: 'done'}));
-    return true; // async
-  }
-  return true; // Keep message channel open for async responses
-});
-
-// Spotlight search functionality
-chrome.commands.onCommand.addListener(async (command) => {
-  if (command === "toggle-search") {
-    toggleSpotlight();
-  } else if (command === "add-to-favorites") {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.id) {
-      try {
-        // First, try sending the message directly.
-        await chrome.tabs.sendMessage(tab.id, { type: "TRIGGER_FAVORITE" });
-      } catch (err) {
-        // If it fails, the content script is likely not injected.
-        console.error('Failed to send favorite trigger. Injecting script first.', err);
+    (async () => {
         try {
-          // Inject the content script.
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ['content.js']
-          });
-          // And now send the message again.
-          await chrome.tabs.sendMessage(tab.id, { type: "TRIGGER_FAVORITE" });
-        } catch(injectErr) {
-           console.error('Failed to inject content script for favorite action:', injectErr);
+            if (request.type === 'SYNC_TABS') {
+                const response = await syncTabs();
+                sendResponse(response);
+            } else if (request.type === 'GET_DEVICES') {
+                const devices = allTabsCache.reduce((acc, tab) => {
+                    if (!acc[tab.deviceId]) {
+                        acc[tab.deviceId] = { id: tab.deviceId, name: tab.deviceName, type: getDeviceType(tab.os, tab.deviceName), count: 0 };
+                    }
+                    acc[tab.deviceId].count++;
+                    return acc;
+                }, {});
+                sendResponse(Object.values(devices));
+            } else if (request.type === 'SEARCH_TABS') {
+                const query = request.query.toLowerCase();
+                let filtered = allTabsCache;
+                if (query) {
+                    filtered = filtered.filter(tab => (tab.title || '').toLowerCase().includes(query) || (tab.url || '').toLowerCase().includes(query));
+                }
+                sendResponse(filtered.slice(0, 50));
+            } else if (request.type === 'TRIGGER_SPOTLIGHT_TOGGLE') {
+                await toggleSpotlight();
+                sendResponse({ status: 'done' });
+            } else if (request.type === 'STORE_KEY') {
+                await saveKey(request.key);
+                sendResponse({ status: 'success' });
+            } else if (request.type === 'GET_KEY') {
+                const key = await getKey(request.keyId);
+                sendResponse(key);
+            } else if (request.type === 'DELETE_KEY') {
+                await deleteKey(request.keyId);
+                sendResponse({ status: 'success' });
+            }
+        } catch (error) {
+            console.error("Error in message listener:", error);
+            sendResponse({ status: 'error', message: error.message });
         }
-      }
-    }
-  }
+    })();
+    return true; // Indicates that the response is sent asynchronously
 });
 
+chrome.commands.onCommand.addListener(async (command) => {
+    if (command === "toggle-search") {
+        await toggleSpotlight();
+    }
+});
 
-console.log('Replica background script loaded.');
+console.log('Replica background script loaded and listeners attached.');
 
     

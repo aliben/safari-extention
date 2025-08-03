@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
 </head>
 <body>
   <div class="container">
@@ -70,30 +71,29 @@
               <label for="deviceNameInput">Device Name</label>
               <input type="text" id="deviceNameInput" placeholder="e.g., Work Laptop">
           </div>
-          <div class="form-group">
-              <label for="apiUrlInput">Backend URL</label>
-              <input type="text" id="apiUrlInput" placeholder="https://<your-backend-url>">
-          </div>
-           <div class="form-group">
-              <label for="spotlightShortcut">Spotlight Shortcut</label>
-              <input type="text" id="spotlightShortcut" readonly placeholder="Click to configure">
-          </div>
-          <div class="form-group">
-              <label for="favoriteShortcut">Favorite Shortcut</label>
-              <input type="text" id="favoriteShortcut" readonly placeholder="Click to configure">
-          </div>
           <div class="setting-item">
-            <label for="showThisDeviceToggle">Show 'This Device' in Spotlight</label>
-            <input type="checkbox" id="showThisDeviceToggle" class="toggle-switch">
+            <label for="encryptionToggle">Enable End-to-End Encryption</label>
+            <input type="checkbox" id="encryptionToggle" class="toggle-switch">
           </div>
+          <div id="encryption-key-section" class="form-group" style="display: none;">
+              <label for="secretKeyInput">Secret Key</label>
+              <textarea id="secretKeyInput" rows="3" placeholder="Paste your secret key here to sync with other devices..."></textarea>
+              <div class="button-group">
+                <button id="generateKeyButton" class="secondary">Generate New Key</button>
+                <button id="saveKeyButton">Save Key</button>
+              </div>
+              <p id="key-status" class="status-text"></p>
+          </div>
+          <hr style="border-color: var(--border); border-top-width: 1px; margin: 16px 0;">
           <button id="toggleSpotlightButton">Toggle Spotlight Bar</button>
-          <button id="saveSettingsButton">Save Settings</button>
+          <button id="saveSettingsButton">Save Device Name</button>
           <p id="settings-status" class="status-text"></p>
         </div>
       </div>
     </div>
     
   </div>
+  <script src="./lib/tweetnacl.min.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -40,8 +40,9 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["spotlight.html"],
+      "resources": ["spotlight.html", "./lib/tweetnacl.min.js"],
       "matches": ["<all_urls>"]
     }
   ]
+  
 }

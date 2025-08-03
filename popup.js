@@ -30,54 +30,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Settings Panel
     const deviceNameInput = document.getElementById('deviceNameInput');
-    const apiUrlInputSettings = document.getElementById('apiUrlInput');
     const saveSettingsButton = document.getElementById('saveSettingsButton');
     const settingsStatusEl = document.getElementById('settings-status');
-    const spotlightShortcutInput = document.getElementById('spotlightShortcut');
-    const favoriteShortcutInput = document.getElementById('favoriteShortcut');
     const toggleSpotlightButton = document.getElementById('toggleSpotlightButton');
-    const showThisDeviceToggle = document.getElementById('showThisDeviceToggle');
+    
+    // Encryption
+    const encryptionToggle = document.getElementById('encryptionToggle');
+    const encryptionKeySection = document.getElementById('encryption-key-section');
+    const secretKeyInput = document.getElementById('secretKeyInput');
+    const generateKeyButton = document.getElementById('generateKeyButton');
+    const saveKeyButton = document.getElementById('saveKeyButton');
+    const keyStatusEl = document.getElementById('key-status');
 
     const showView = (viewToShow) => {
-        allViews.forEach(view => {
-            view.classList.remove('active');
-        });
+        allViews.forEach(view => view.classList.remove('active'));
         viewToShow.classList.add('active');
     };
 
     const switchTab = (tabId) => {
       tabContents.forEach(content => content.classList.remove('active'));
       tabButtons.forEach(button => button.classList.remove('active'));
-
       document.getElementById(tabId).classList.add('active');
       document.querySelector(`.tab-button[data-tab="${tabId}"]`).classList.add('active');
-      
-      if (tabId === 'settings-panel') {
-        loadShortcuts();
-      }
     };
     
     const triggerSync = () => {
         if (!chrome.runtime?.sendMessage) return;
-        
         statusEl.textContent = 'Syncing...';
         chrome.runtime.sendMessage({ type: 'SYNC_TABS' }, (response) => {
-            if (chrome.runtime.lastError) {
-                statusEl.textContent = 'Sync failed. Check background logs.';
-                console.error('Error sending message:', chrome.runtime.lastError.message);
+             if (chrome.runtime.lastError) {
+                statusEl.textContent = `Sync failed: ${chrome.runtime.lastError.message}`;
                 return;
             }
-            if (response) {
-                if (response.status === 'success') {
-                    statusEl.textContent = `Synced ${response.count} tabs.`;
-                    listCurrentTabs();
-                    setTimeout(() => { statusEl.textContent = ''; }, 3000);
-                } else {
-                    statusEl.textContent = `Sync failed: ${response.message}`;
-                }
+            if (response?.status === 'success') {
+                statusEl.textContent = `Sync successful.`;
+                listCurrentTabs();
             } else {
-                statusEl.textContent = 'Sync failed. No response from background.';
+                statusEl.textContent = `Sync failed: ${response?.message || 'Unknown error'}`;
             }
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
         });
     };
     
@@ -85,12 +76,10 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.tabs.query({}, (tabs) => {
             tabsListEl.innerHTML = '';
             const filteredTabs = tabs.filter(tab => tab.url && !tab.url.startsWith('chrome://'));
-
             if (filteredTabs.length === 0) {
                 tabsListEl.innerHTML = '<li class="no-tabs-message">No active tabs found.</li>';
                 return;
             }
-            
             filteredTabs.forEach(tab => {
                 const li = document.createElement('li');
                 const favicon = document.createElement('img');
@@ -98,7 +87,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 favicon.onerror = () => { favicon.src = 'images/icon16.png'; };
                 const title = document.createElement('span');
                 title.textContent = tab.title;
-
                 li.appendChild(favicon);
                 li.appendChild(title);
                 tabsListEl.appendChild(li);
@@ -106,25 +94,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
-    const loadShortcuts = () => {
-      chrome.commands.getAll((commands) => {
-        const toggleSearch = commands.find(c => c.name === 'toggle-search');
-        spotlightShortcutInput.value = toggleSearch?.shortcut || 'Not set';
-
-        const addToFavorites = commands.find(c => c.name === 'add-to-favorites');
-        favoriteShortcutInput.value = addToFavorites?.shortcut || 'Not set';
-      });
-    };
-
-    // Initialization logic
-    chrome.storage.sync.get(['apiUrl', 'userId', 'deviceName', 'os', 'showThisDeviceInSpotlight'], (result) => {
+    // Initialization
+    chrome.storage.sync.get(['apiUrl', 'userId', 'deviceName', 'os'], (result) => {
         if (result.apiUrl) {
             apiUrlInput.value = result.apiUrl;
-            apiUrlInputSettings.value = result.apiUrl;
             if (result.userId) {
                 loggedInUserEl.textContent = result.userId;
                 deviceNameInput.value = result.deviceName || `Chrome (${result.os || 'Unknown'})`;
-                showThisDeviceToggle.checked = result.showThisDeviceInSpotlight !== false; // default to true
                 showView(mainContent);
                 switchTab('tabs-panel');
                 listCurrentTabs();
@@ -136,23 +112,27 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Load encryption state
+    chrome.runtime.sendMessage({ type: 'GET_KEY', keyId: 'symmetricKey' }, (keyInfo) => {
+        if (keyInfo) {
+            encryptionToggle.checked = true;
+            encryptionKeySection.style.display = 'block';
+            secretKeyInput.value = keyInfo.key || '';
+        }
+    });
+
+
     // Event Listeners
     saveUrlButton.addEventListener('click', () => {
         const url = apiUrlInput.value.trim();
         if (url) {
-            chrome.storage.sync.set({ apiUrl: url }, () => {
-                apiUrlInputSettings.value = url;
-                showView(authSection);
-            });
+            chrome.storage.sync.set({ apiUrl: url }, () => showView(authSection));
         } else {
             urlStatusEl.textContent = 'Please enter a valid URL.';
-            urlStatusEl.classList.add('error-text');
         }
     });
 
-    backToUrlButton.addEventListener('click', () => {
-        showView(urlSection);
-    });
+    backToUrlButton.addEventListener('click', () => showView(urlSection));
 
     loginButton.addEventListener('click', () => {
         const user = userIdInput.value.trim();
@@ -161,11 +141,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 loggedInUserEl.textContent = user;
                 showView(mainContent);
                 switchTab('tabs-panel');
-                triggerSync(); // Auto-sync after login
+                triggerSync();
             });
         } else {
             authStatusEl.textContent = 'Please enter a username.';
-            authStatusEl.classList.add('error-text');
         }
     });
 
@@ -177,60 +156,85 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     syncButton.addEventListener('click', triggerSync);
-
-    tabButtons.forEach(button => {
-        button.addEventListener('click', () => switchTab(button.dataset.tab));
+    tabButtons.forEach(button => button.addEventListener('click', () => switchTab(button.dataset.tab)));
+    toggleSpotlightButton.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ type: 'TRIGGER_SPOTLIGHT_TOGGLE' }, () => window.close());
     });
 
     saveSettingsButton.addEventListener('click', () => {
-        const newUrl = apiUrlInputSettings.value.trim();
         const newDeviceName = deviceNameInput.value.trim();
-        const showThisDevice = showThisDeviceToggle.checked;
-        
-        chrome.storage.sync.set({ apiUrl: newUrl, deviceName: newDeviceName, showThisDeviceInSpotlight: showThisDevice }, () => {
-            apiUrlInput.value = newUrl;
+        chrome.storage.sync.set({ deviceName: newDeviceName }, () => {
             settingsStatusEl.textContent = 'Settings saved!';
-            setTimeout(() => { settingsStatusEl.textContent = ''; }, 3000);
-            triggerSync(); // Sync to update device name on server
-        });
-    });
-
-    showThisDeviceToggle.addEventListener('change', () => {
-        const showThisDevice = showThisDeviceToggle.checked;
-        chrome.storage.sync.set({ showThisDeviceInSpotlight: showThisDevice }, () => {
-             settingsStatusEl.textContent = 'Settings saved!';
             setTimeout(() => { settingsStatusEl.textContent = ''; }, 2000);
+            triggerSync();
         });
     });
 
-    const openShortcutsPage = () => {
-        chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
-    };
-
-    spotlightShortcutInput.addEventListener('click', openShortcutsPage);
-    favoriteShortcutInput.addEventListener('click', openShortcutsPage);
-
-    toggleSpotlightButton.addEventListener('click', () => {
-        chrome.runtime.sendMessage({ type: 'TRIGGER_SPOTLIGHT_TOGGLE' }, () => {
-            if (chrome.runtime.lastError) {
-                console.error('Error toggling spotlight:', chrome.runtime.lastError.message);
-                settingsStatusEl.textContent = 'Could not toggle Spotlight.';
-            } else {
-                window.close();
-            }
-        });
+    // --- Encryption Listeners ---
+    encryptionToggle.addEventListener('change', async (e) => {
+        encryptionKeySection.style.display = e.target.checked ? 'block' : 'none';
+        if (!e.target.checked) {
+            // Remove keys if encryption is disabled
+            await chrome.runtime.sendMessage({ type: 'DELETE_KEY', keyId: 'symmetricKey' });
+            secretKeyInput.value = '';
+            keyStatusEl.textContent = 'Encryption disabled. Key removed.';
+            setTimeout(() => { keyStatusEl.textContent = ''; }, 2000);
+            triggerSync();
+        }
     });
 
-    // Update tab list on browser tab changes
-    const updatePopupOnTabChange = () => {
-        chrome.storage.sync.get('userId', (result) => {
-            if(result.userId) {
-                listCurrentTabs();
+    generateKeyButton.addEventListener('click', () => {
+        if (typeof nacl === 'undefined') {
+            keyStatusEl.textContent = 'Encryption functions not available.';
+            return;
+        }
+        function encodeBase64(arr) {
+            return btoa(String.fromCharCode.apply(null, arr));
+        }
+        const key = encodeBase64(nacl.randomBytes(nacl.secretbox.keyLength));
+        secretKeyInput.value = key;
+        keyStatusEl.textContent = 'New key generated. Click "Save Key".';
+    });
+
+    saveKeyButton.addEventListener('click', () => {
+        if (typeof nacl === 'undefined') {
+            keyStatusEl.textContent = 'Encryption functions not available.';
+            return;
+        }
+        function decodeBase64(str) {
+            var binary = atob(str);
+            var len = binary.length;
+            var bytes = new Uint8Array(len);
+            for (var i = 0; i < len; i++) {
+                bytes[i] = binary.charCodeAt(i);
             }
-        });
-    };
-    chrome.tabs.onUpdated.addListener(updatePopupOnTabChange);
-    chrome.tabs.onRemoved.addListener(updatePopupOnTabChange);
-    chrome.tabs.onCreated.addListener(updatePopupOnTabChange);
-    chrome.tabs.onReplaced.addListener(updatePopupOnTabChange);
+            return bytes;
+        }
+        const key = secretKeyInput.value.trim();
+        if (key) {
+            // Basic validation: Check if it's a valid Base64 string of the right length
+            try {
+                const keyUint8 = decodeBase64(key);
+                if (keyUint8.length !== nacl.secretbox.keyLength) {
+                    keyStatusEl.textContent = `Invalid key length. Must be ${nacl.secretbox.keyLength} bytes.`;
+                    return;
+                }
+            } catch (e) {
+                keyStatusEl.textContent = 'Invalid Base64 key format.';
+                return;
+            }
+
+            chrome.runtime.sendMessage({ type: 'STORE_KEY', key: { id: 'symmetricKey', key: key } }, (response) => {
+                if (response.status === 'success') {
+                    keyStatusEl.textContent = 'Key saved successfully!';
+                    triggerSync();
+                } else {
+                    keyStatusEl.textContent = `Error saving key: ${response.message}`;
+                }
+                setTimeout(() => { keyStatusEl.textContent = ''; }, 2000);
+            });
+        } else {
+            keyStatusEl.textContent = 'Secret key cannot be empty.';
+        }
+    });
 });
