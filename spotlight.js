@@ -151,15 +151,15 @@ document.addEventListener('DOMContentLoaded', () => {
         selectedIndex = -1;
 
         if (filteredResults.length > 0) {
-            filteredResults.forEach((tab, index) => {
+            filteredResults.forEach((item, index) => {
                 const li = document.createElement('li');
                 li.className = 'result-item';
-                li.dataset.url = tab.url;
+                li.dataset.url = item.url;
                 li.dataset.index = index;
 
                 const favicon = document.createElement('img');
                 favicon.className = 'favicon';
-                favicon.src = tab.faviconUrl || 'images/icon16.png';
+                favicon.src = item.isBookmark ? 'images/icon16.png' : (item.faviconUrl || 'images/icon16.png');
                 favicon.onerror = () => { favicon.src = 'images/icon16.png'; };
 
                 const details = document.createElement('div');
@@ -168,7 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const title = document.createElement('div');
                 title.className = 'result-title';
                 
-                if (tab.isFavorite) {
+                if (item.isFavorite || item.isBookmark) {
                     const star = document.createElement('span');
                     star.className = 'favorite-icon';
                     star.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`;
@@ -176,19 +176,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 const titleText = document.createElement('span');
-                titleText.textContent = tab.title || "No Title";
+                titleText.textContent = item.title || "No Title";
                 title.appendChild(titleText);
                 
                 const url = document.createElement('div');
                 url.className = 'result-url';
-                url.textContent = tab.url;
+                url.textContent = item.url;
 
                 details.appendChild(title);
                 details.appendChild(url);
                 
                 const device = document.createElement('span');
                 device.className = 'result-device';
-                device.textContent = tab.deviceName || 'Unknown';
+                device.textContent = item.deviceName || 'Unknown';
 
                 li.appendChild(favicon);
                 li.appendChild(details);
@@ -196,8 +196,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 li.addEventListener('mouseover', () => updateSelection(index));
                 li.addEventListener('click', () => {
-                    chrome.tabs.create({ url: tab.url, active: true });
-                    closeSpotlight();
+                    if (item.url) {
+                        chrome.tabs.create({ url: item.url, active: true });
+                        closeSpotlight();
+                    }
                 });
 
                 resultsList.appendChild(li);

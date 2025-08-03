@@ -165,6 +165,27 @@ function recursiveDecryptBookmarks(nodes, symmetricKey) {
     });
 }
 
+function flattenBookmarks(bookmarkNodes, deviceName, os, deviceId) {
+    let bookmarks = [];
+    for (const node of bookmarkNodes) {
+        if (node.url) {
+            bookmarks.push({
+                ...node,
+                id: node.id || node.url,
+                deviceName: deviceName,
+                os: os,
+                deviceId: deviceId,
+                isBookmark: true,
+                faviconUrl: 'images/bookmark-icon.png' // Generic bookmark icon
+            });
+        }
+        if (node.children) {
+            bookmarks = bookmarks.concat(flattenBookmarks(node.children, deviceName, os, deviceId));
+        }
+    }
+    return bookmarks;
+}
+
 
 const syncTabs = async () => {
     console.log('Syncing tabs...');
@@ -244,10 +265,14 @@ const syncTabs = async () => {
         
         const remoteBookmarksForCache = [];
         if (data.remoteBookmarks && typeof data.remoteBookmarks === 'object') {
-            for (const deviceId in data.remoteBookmarks) {
+             for (const deviceId in data.remoteBookmarks) {
                 const deviceBookmarks = data.remoteBookmarks[deviceId];
                 const decryptedBookmarks = symmetricKey ? recursiveDecryptBookmarks(deviceBookmarks, symmetricKey) : deviceBookmarks;
-                remoteBookmarksForCache.push(...decryptedBookmarks);
+                // Find device info from remote tabs
+                const deviceInfoTab = remoteTabsForCache.find(t => t.deviceId === deviceId);
+                const deviceName = deviceInfoTab ? deviceInfoTab.deviceName : 'Unknown Device';
+                const os = deviceInfoTab ? deviceInfoTab.os : 'unknown';
+                remoteBookmarksForCache.push(...flattenBookmarks(decryptedBookmarks, deviceName, os, deviceId));
             }
         }
         allBookmarksCache = remoteBookmarksForCache;
@@ -350,7 +375,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             } else if (request.type === 'SEARCH_TABS') {
                 const { apiUrl, userId } = await chrome.storage.sync.get(['apiUrl', 'userId']);
                 const query = request.query.toLowerCase();
-                let searchSource = allTabsCache;
+                let searchSource = [...allTabsCache, ...allBookmarksCache];
 
                 if (request.searchScope === 'favorites') {
                     if (apiUrl && userId) {
@@ -382,7 +407,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
                 let filtered = searchSource;
                 if (query) {
-                    filtered = filtered.filter(tab => (tab.title || '').toLowerCase().includes(query) || (tab.url || '').toLowerCase().includes(query));
+                    filtered = filtered.filter(item => (item.title || '').toLowerCase().includes(query) || (item.url || '').toLowerCase().includes(query));
                 }
                 sendResponse(filtered.slice(0, 50));
 
@@ -456,4 +481,3 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 console.log('Replica background script loaded and listeners attached.');
-
