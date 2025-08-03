@@ -357,8 +357,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         try {
                             const favResponse = await fetch(`${new URL('/api/favorites', apiUrl).href}?userId=${encodeURIComponent(userId)}`);
                             if (favResponse.ok) {
-                                const { favorites } = await favResponse.json();
-                                // Adapt favorite structure to match tab structure for consistent searching
+                                let { favorites } = await favResponse.json();
+                                const keyInfo = await getKey('symmetricKey');
+                                const symmetricKey = keyInfo ? keyInfo.key : null;
+                                if (symmetricKey) {
+                                    favorites = favorites.map(fav => {
+                                        if (fav.isEncrypted && fav.payload) {
+                                            const decrypted = decryptSymmetric(fav.payload, symmetricKey);
+                                            return {...fav, ...decrypted};
+                                        }
+                                        return fav;
+                                    })
+                                }
                                 searchSource = (favorites || []).map(fav => ({...fav, id: fav.url, deviceName: 'Favorites'}));
                             }
                         } catch (e) {
@@ -379,6 +389,46 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             } else if (request.type === 'TRIGGER_SPOTLIGHT_TOGGLE') {
                 await toggleSpotlight();
                 sendResponse({ status: 'done' });
+            } else if (request.type === 'ADD_FAVORITE') {
+                const { tabData } = request;
+                const { apiUrl, userId } = await chrome.storage.sync.get(['apiUrl', 'userId']);
+                const keyInfo = await getKey('symmetricKey');
+                const symmetricKey = keyInfo ? keyInfo.key : null;
+
+                if (!apiUrl || !userId) {
+                    sendResponse({ status: 'error', message: 'User or API URL not configured.' });
+                    return;
+                }
+                
+                let favoritePayload = {
+                    title: tabData.title,
+                    url: tabData.url,
+                    faviconUrl: tabData.faviconUrl,
+                    timestamp: tabData.timestamp,
+                };
+                
+                let body = { ...favoritePayload, isEncrypted: false };
+
+                if (symmetricKey) {
+                    const encryptedPayload = encryptSymmetric(favoritePayload, symmetricKey);
+                    body = { payload: encryptedPayload, isEncrypted: true, url: tabData.url, timestamp: tabData.timestamp };
+                }
+
+                try {
+                    const response = await fetch(`${new URL('/api/favorites', apiUrl).href}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tabs: [body], userId }),
+                    });
+                    if (response.ok) {
+                        sendResponse({ status: 'success' });
+                    } else {
+                        const errorData = await response.json();
+                        sendResponse({ status: 'error', message: errorData.message || 'API error' });
+                    }
+                } catch(e) {
+                    sendResponse({ status: 'error', message: e.message });
+                }
             } else if (request.type === 'STORE_KEY') {
                 await saveKey(request.key);
                 sendResponse({ status: 'success' });

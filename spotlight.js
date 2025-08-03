@@ -28,8 +28,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function fetchDevices() {
         if (currentSearchScope === 'favorites') {
             deviceFilterList.innerHTML = '';
+            // Hide container if in favorite mode
+            document.getElementById('device-filter-container').style.display = 'none';
             return;
         };
+        // Show container if not in favorite mode
+        document.getElementById('device-filter-container').style.display = 'block';
         chrome.runtime.sendMessage({ type: 'GET_DEVICES' }, (devices) => {
             if (devices && devices.length > 0) {
                 currentDevices = devices;
@@ -199,6 +203,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 resultsList.appendChild(li);
             });
             updateSelection(0);
+        } else {
+            const li = document.createElement('li');
+            li.className = 'result-item';
+            li.style.justifyContent = 'center';
+            li.textContent = 'No results found.';
+            resultsList.appendChild(li);
         }
     }
 
@@ -254,7 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        if (items.length === 0) return;
+        if (items.length === 0 || !items[0].dataset.url) return;
 
         if (e.key === 'ArrowDown') {
             e.preventDefault();
@@ -304,22 +314,25 @@ document.addEventListener('DOMContentLoaded', () => {
             const items = resultsList.getElementsByClassName('result-item');
             if (selectedIndex > -1 && items[selectedIndex]) {
                 const url = items[selectedIndex].dataset.url;
-                // Find the tab data to send to the backend
                 const tabData = currentResults.find(t => t.url === url);
                 if (tabData) {
-                    // This is a simplified "add" - ideally this would call a proper API.
-                    // For now, we'll just log it. A full implementation would require
-                    // sending a message to the background script to call the /api/favorites endpoint.
-                    console.log("Favoriting via shortcut:", tabData.title);
-                    
-                    // Add visual feedback
-                    const titleDiv = items[selectedIndex].querySelector('.result-title');
-                    if (titleDiv && !titleDiv.querySelector('.favorite-icon')) {
-                         const star = document.createElement('span');
-                         star.className = 'favorite-icon';
-                         star.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`;
-                         titleDiv.prepend(star);
-                    }
+                    chrome.runtime.sendMessage({ type: 'ADD_FAVORITE', tabData }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            console.error("Error adding favorite:", chrome.runtime.lastError.message);
+                            return;
+                        }
+                        if (response.status === 'success') {
+                            const titleDiv = items[selectedIndex].querySelector('.result-title');
+                            if (titleDiv && !titleDiv.querySelector('.favorite-icon')) {
+                                 const star = document.createElement('span');
+                                 star.className = 'favorite-icon';
+                                 star.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`;
+                                 titleDiv.prepend(star);
+                            }
+                        } else {
+                            console.error("Failed to add favorite:", response.message);
+                        }
+                    });
                 }
             }
         }
@@ -329,4 +342,3 @@ document.addEventListener('DOMContentLoaded', () => {
     performSearch();
     searchInput.focus();
 });
-
