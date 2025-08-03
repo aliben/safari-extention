@@ -5,12 +5,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const container = document.getElementById('spotlight-container');
     const deviceFilterList = document.getElementById('device-filter-list');
     const sortContainer = document.getElementById('sort-container');
+    const searchPill = document.getElementById('search-pill');
 
     let selectedIndex = 0;
     let currentResults = [];
     let currentDevices = [];
     let selectedDeviceId = 'all';
     let currentSort = 'timestamp';
+    let currentSearchScope = 'all'; // 'all' or 'favorites'
 
     function closeSpotlight() {
         window.parent.postMessage({ type: 'CLOSE_SPOTLIGHT' }, '*');
@@ -18,12 +20,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function performSearch() {
         const query = searchInput.value;
-        chrome.runtime.sendMessage({ type: 'SEARCH_TABS', query }, (allResults) => {
+        chrome.runtime.sendMessage({ type: 'SEARCH_TABS', query, searchScope: currentSearchScope }, (allResults) => {
             renderResults(allResults);
         });
     }
 
     function fetchDevices() {
+        if (currentSearchScope === 'favorites') {
+            deviceFilterList.innerHTML = '';
+            return;
+        };
         chrome.runtime.sendMessage({ type: 'GET_DEVICES' }, (devices) => {
             if (devices && devices.length > 0) {
                 currentDevices = devices;
@@ -86,14 +92,49 @@ document.addEventListener('DOMContentLoaded', () => {
         renderResults(currentResults); // Re-render with the new filter
     }
 
+    function updateSearchPill() {
+        if (currentSearchScope === 'favorites') {
+            searchPill.textContent = ''; // Clear previous content
+            
+            const text = document.createTextNode('Favorites ');
+            const closeButton = document.createElement('span');
+            closeButton.className = 'close-pill';
+            closeButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+            closeButton.onclick = (e) => {
+                e.stopPropagation();
+                setSearchScope('all');
+            };
+            
+            searchPill.appendChild(text);
+            searchPill.appendChild(closeButton);
+            searchPill.classList.remove('hidden');
+        } else {
+            searchPill.classList.add('hidden');
+        }
+    }
+
+    function setSearchScope(scope) {
+        if (currentSearchScope === scope) return;
+        currentSearchScope = scope;
+        searchInput.value = '';
+        updateSearchPill();
+        fetchDevices();
+        performSearch();
+        searchInput.focus();
+    }
+
+
     function renderResults(results) {
         resultsList.innerHTML = '';
         currentResults = results || [];
         
         let filteredResults = currentResults;
-        if (selectedDeviceId !== 'all') {
+        if (selectedDeviceId !== 'all' && currentSearchScope !== 'favorites') {
             filteredResults = filteredResults.filter(tab => tab.deviceId === selectedDeviceId);
         }
+
+        // Add favorite marker to results
+        filteredResults = filteredResults.map(res => ({ ...res, isFavorite: res.deviceName === 'Favorites' }));
         
         // Sorting
         filteredResults.sort((a, b) => {
@@ -122,7 +163,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 const title = document.createElement('div');
                 title.className = 'result-title';
-                title.textContent = tab.title || "No Title";
+                
+                if (tab.isFavorite) {
+                    const star = document.createElement('span');
+                    star.className = 'favorite-icon';
+                    star.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`;
+                    title.appendChild(star);
+                }
+
+                const titleText = document.createElement('span');
+                titleText.textContent = tab.title || "No Title";
+                title.appendChild(titleText);
                 
                 const url = document.createElement('div');
                 url.className = 'result-url';
@@ -181,13 +232,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
 
-    searchInput.addEventListener('input', performSearch);
+    searchInput.addEventListener('input', (e) => {
+        if (searchInput.value === 'f ') {
+            setSearchScope('favorites');
+            return;
+        }
+        performSearch();
+    });
+
 
     searchInput.addEventListener('keydown', (e) => {
         const items = resultsList.getElementsByClassName('result-item');
         if (e.key === 'Escape') {
             closeSpotlight();
             return;
+        }
+        
+        if (e.key === 'Backspace' && searchInput.value === '') {
+            if (currentSearchScope === 'favorites') {
+                setSearchScope('all');
+            }
         }
 
         if (items.length === 0) return;
@@ -205,7 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (selectedIndex > -1 && items[selectedIndex]) {
                 items[selectedIndex].click();
             }
-        } else if (e.key === 'c' && e.metaKey) { // Cmd+C
+        } else if (e.key === 'c' && (e.metaKey || e.ctrlKey)) { // Cmd+C or Ctrl+C
              e.preventDefault();
             if (selectedIndex > -1 && items[selectedIndex]) {
                 const urlToCopy = items[selectedIndex].dataset.url;
@@ -235,15 +299,27 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     window.addEventListener('message', (event) => {
+        // Handle adding a favorite via shortcut
         if (event.data.type === 'ADD_TO_FAVORITES_COMMAND') {
             const items = resultsList.getElementsByClassName('result-item');
             if (selectedIndex > -1 && items[selectedIndex]) {
                 const url = items[selectedIndex].dataset.url;
+                // Find the tab data to send to the backend
                 const tabData = currentResults.find(t => t.url === url);
                 if (tabData) {
-                    // Logic to add to favorites would go here.
-                    // For now, we can just log it or show a visual cue.
-                    console.log("Favoriting:", tabData.title);
+                    // This is a simplified "add" - ideally this would call a proper API.
+                    // For now, we'll just log it. A full implementation would require
+                    // sending a message to the background script to call the /api/favorites endpoint.
+                    console.log("Favoriting via shortcut:", tabData.title);
+                    
+                    // Add visual feedback
+                    const titleDiv = items[selectedIndex].querySelector('.result-title');
+                    if (titleDiv && !titleDiv.querySelector('.favorite-icon')) {
+                         const star = document.createElement('span');
+                         star.className = 'favorite-icon';
+                         star.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`;
+                         titleDiv.prepend(star);
+                    }
                 }
             }
         }
@@ -253,3 +329,4 @@ document.addEventListener('DOMContentLoaded', () => {
     performSearch();
     searchInput.focus();
 });
+

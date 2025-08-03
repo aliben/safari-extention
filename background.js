@@ -295,6 +295,19 @@ async function toggleSpotlight() {
     }
 }
 
+async function triggerFavoriteInActiveTab() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && tab.id) {
+        try {
+            // First check if spotlight is open, if so, send message to it
+            await chrome.tabs.sendMessage(tab.id, { type: "TRIGGER_FAVORITE" });
+        } catch (err) {
+            console.warn("Could not send 'TRIGGER_FAVORITE' message to active tab's content script.", err);
+        }
+    }
+}
+
+
 // --- Event Listeners ---
 chrome.runtime.onInstalled.addListener(async (details) => {
     console.log('Extension installed or updated:', details.reason);
@@ -335,12 +348,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 }, {});
                 sendResponse(Object.values(devices));
             } else if (request.type === 'SEARCH_TABS') {
+                const { apiUrl, userId } = await chrome.storage.sync.get(['apiUrl', 'userId']);
                 const query = request.query.toLowerCase();
-                let filtered = allTabsCache;
+                let searchSource = allTabsCache;
+
+                if (request.searchScope === 'favorites') {
+                    if (apiUrl && userId) {
+                        try {
+                            const favResponse = await fetch(`${new URL('/api/favorites', apiUrl).href}?userId=${encodeURIComponent(userId)}`);
+                            if (favResponse.ok) {
+                                const { favorites } = await favResponse.json();
+                                // Adapt favorite structure to match tab structure for consistent searching
+                                searchSource = (favorites || []).map(fav => ({...fav, id: fav.url, deviceName: 'Favorites'}));
+                            }
+                        } catch (e) {
+                            console.error("Failed to fetch favorites:", e);
+                            searchSource = [];
+                        }
+                    } else {
+                       searchSource = [];
+                    }
+                }
+
+                let filtered = searchSource;
                 if (query) {
                     filtered = filtered.filter(tab => (tab.title || '').toLowerCase().includes(query) || (tab.url || '').toLowerCase().includes(query));
                 }
                 sendResponse(filtered.slice(0, 50));
+
             } else if (request.type === 'TRIGGER_SPOTLIGHT_TOGGLE') {
                 await toggleSpotlight();
                 sendResponse({ status: 'done' });
@@ -365,9 +400,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 chrome.commands.onCommand.addListener(async (command) => {
     if (command === "toggle-search") {
         await toggleSpotlight();
+    } else if (command === "add-to-favorites") {
+        await triggerFavoriteInActiveTab();
     }
 });
 
 console.log('Replica background script loaded and listeners attached.');
 
-    
