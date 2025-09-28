@@ -3,16 +3,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const searchInput = document.getElementById('search-input');
     const resultsList = document.getElementById('results-list');
     const container = document.getElementById('spotlight-container');
+    const deviceFilterContainer = document.getElementById('device-filter-container');
     const deviceFilterList = document.getElementById('device-filter-list');
     const sortContainer = document.getElementById('sort-container');
     const searchPill = document.getElementById('search-pill');
+    const tabsModeButton = document.getElementById('tabs-mode-button');
+    const bookmarksModeButton = document.getElementById('bookmarks-mode-button');
 
     let selectedIndex = 0;
     let currentResults = [];
     let currentDevices = [];
     let selectedDeviceId = 'all';
     let currentSort = 'timestamp';
-    let currentSearchScope = 'all'; // 'all' or 'favorites'
+    let currentSearchScope = 'tabs'; // 'tabs', 'bookmarks', 'favorites'
 
     function closeSpotlight() {
         window.parent.postMessage({ type: 'CLOSE_SPOTLIGHT' }, '*');
@@ -20,30 +23,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function performSearch() {
         const query = searchInput.value;
-        chrome.runtime.sendMessage({ type: 'SEARCH_TABS', query, searchScope: currentSearchScope }, (allResults) => {
+        // Map search scope to mode for background script
+        const mode = (currentSearchScope === 'favorites') ? 'favorites' : currentSearchScope;
+        chrome.runtime.sendMessage({ type: 'SEARCH', query, mode }, (allResults) => {
             renderResults(allResults);
         });
     }
 
     function fetchDevices() {
-        if (currentSearchScope === 'favorites') {
-            deviceFilterList.innerHTML = '';
-            // Hide container if in favorite mode
-            document.getElementById('device-filter-container').style.display = 'none';
-            return;
-        };
-        // Show container if not in favorite mode
-        document.getElementById('device-filter-container').style.display = 'block';
-        chrome.runtime.sendMessage({ type: 'GET_DEVICES' }, (devices) => {
-            if (devices && devices.length > 0) {
-                currentDevices = devices;
-                renderDeviceFilters();
-            }
-        });
+        // Only fetch and show devices if we are in tabs mode
+        if (currentSearchScope === 'tabs') {
+            deviceFilterContainer.style.display = 'block';
+            chrome.runtime.sendMessage({ type: 'GET_DEVICES' }, (devices) => {
+                if (devices && devices.length > 0) {
+                    currentDevices = devices;
+                    renderDeviceFilters();
+                }
+            });
+        } else {
+            deviceFilterContainer.style.display = 'none';
+        }
     }
     
     function renderDeviceFilters() {
         deviceFilterList.innerHTML = '';
+        if (currentSearchScope !== 'tabs') return;
 
         // Add "All Devices" pill
         const allPill = document.createElement('div');
@@ -106,7 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
             closeButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
             closeButton.onclick = (e) => {
                 e.stopPropagation();
-                setSearchScope('all');
+                setSearchScope('tabs');
             };
             
             searchPill.appendChild(text);
@@ -121,7 +125,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentSearchScope === scope) return;
         currentSearchScope = scope;
         searchInput.value = '';
+
+        // Update active button
+        tabsModeButton.classList.toggle('active', scope === 'tabs');
+        bookmarksModeButton.classList.toggle('active', scope === 'bookmarks');
+        
+        // This is for the "f + space" mode
         updateSearchPill();
+
         fetchDevices();
         performSearch();
         searchInput.focus();
@@ -133,7 +144,9 @@ document.addEventListener('DOMContentLoaded', () => {
         currentResults = results || [];
         
         let filteredResults = currentResults;
-        if (selectedDeviceId !== 'all' && currentSearchScope !== 'favorites') {
+        
+        // Only filter by device if in 'tabs' mode
+        if (currentSearchScope === 'tabs' && selectedDeviceId !== 'all') {
             filteredResults = filteredResults.filter(tab => tab.deviceId === selectedDeviceId);
         }
 
@@ -262,7 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (e.key === 'Backspace' && searchInput.value === '') {
             if (currentSearchScope === 'favorites') {
-                setSearchScope('all');
+                setSearchScope('tabs');
             }
         }
 
@@ -303,6 +316,8 @@ document.addEventListener('DOMContentLoaded', () => {
         button.addEventListener('click', () => setSort(button.dataset.sort));
     });
 
+    tabsModeButton.addEventListener('click', () => setSearchScope('tabs'));
+    bookmarksModeButton.addEventListener('click', () => setSearchScope('bookmarks'));
     
     document.addEventListener('click', (e) => {
         if (!container.contains(e.target)) {
@@ -344,3 +359,4 @@ document.addEventListener('DOMContentLoaded', () => {
     performSearch();
     searchInput.focus();
 });
+

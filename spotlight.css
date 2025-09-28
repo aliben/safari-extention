@@ -19,30 +19,18 @@ body {
     position: relative;
     width: 100%;
     max-width: 640px;
+    padding: 2px;
     border-radius: 14px;
-    box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4);
-    padding: 2px; /* This padding will determine the border thickness */
-    background-color: transparent !important; /* The wrapper itself is transparent */
-}
-
-#spotlight-wrapper::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    border-radius: inherit; /* Use the parent's border-radius */
-    //background: linear-gradient(90deg, #E950D9, #F5A623, #F5D023, #E950D9);
+    background: linear-gradient(90deg, #E950D9, #F5A623, #F5D023, #E950D9);
     background-size: 200% 200%;
     animation: gradient-flow 4s ease infinite;
-    z-index: -1; /* Place the gradient behind the main content */
+    box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4);
 }
 
 #spotlight-container {
   width: 100%;
-  background-color: rgba(30, 30, 30, 0.8); /* Made more transparent */
-  border-radius: 12px; /* This should be wrapper's radius minus the padding */
+  background-color: rgba(30, 30, 30, 0.95); /* A bit more opaque */
+  border-radius: 12px; /* Adjusted for new padding */
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   display: flex;
@@ -115,6 +103,38 @@ body {
   color: #757575;
   font-weight: 500;
 }
+
+#tabs-container {
+    display: flex;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    gap: 8px;
+}
+
+.tab-button {
+    flex: 1;
+    padding: 8px 16px;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.7);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+}
+
+.tab-button:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+    color: white;
+}
+
+.tab-button.active {
+    background-color: #007AFF;
+    color: white;
+    border-color: rgba(0, 122, 255, 0.8);
+}
+
 
 #device-filter-container {
   padding: 8px 12px;
@@ -230,30 +250,14 @@ body {
   cursor: pointer;
   transition: all 0.15s ease-in-out;
   position: relative;
-  overflow: hidden; /* Hide the pseudo-element when it's off-screen */
-}
-
-/* The animated border */
-.result-item::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background: linear-gradient(90deg, #E950D9, #F5A623, #03A9F4);
-    transform: translateX(-101%);
-    transition: transform 0.3s ease-in-out;
+  border-left: 2px solid transparent;
 }
 
 .result-item.selected {
-  background-color: rgba(74, 85, 104, 0.2); /* A neutral, modern gray */
+  background-color: rgba(0, 122, 255, 0.15);
+  transform: scale(1.02);
+  border-left-color: #007AFF;
   color: white;
-}
-
-/* Slide the animated border in on selection */
-.result-item.selected::after {
-    transform: translateX(0);
 }
 
 .result-item.selected .result-url,
@@ -359,3 +363,4 @@ body {
 }
 
     
+

@@ -167,6 +167,7 @@ function recursiveDecryptBookmarks(nodes, symmetricKey) {
 
 function flattenBookmarks(bookmarkNodes, deviceName, os, deviceId) {
     let bookmarks = [];
+    if (!bookmarkNodes) return bookmarks;
     for (const node of bookmarkNodes) {
         if (node.url) {
             bookmarks.push({
@@ -263,19 +264,19 @@ const syncTabs = async () => {
 
         allTabsCache = [...localTabsForCache, ...remoteTabsForCache];
         
-        const remoteBookmarksForCache = [];
+        let flatBookmarks = [];
         if (data.remoteBookmarks && typeof data.remoteBookmarks === 'object') {
              for (const deviceId in data.remoteBookmarks) {
                 const deviceBookmarks = data.remoteBookmarks[deviceId];
                 const decryptedBookmarks = symmetricKey ? recursiveDecryptBookmarks(deviceBookmarks, symmetricKey) : deviceBookmarks;
                 // Find device info from remote tabs
-                const deviceInfoTab = remoteTabsForCache.find(t => t.deviceId === deviceId);
+                const deviceInfoTab = allTabsCache.find(t => t.deviceId === deviceId);
                 const deviceName = deviceInfoTab ? deviceInfoTab.deviceName : 'Unknown Device';
                 const os = deviceInfoTab ? deviceInfoTab.os : 'unknown';
-                remoteBookmarksForCache.push(...flattenBookmarks(decryptedBookmarks, deviceName, os, deviceId));
+                flatBookmarks.push(...flattenBookmarks(decryptedBookmarks, deviceName, os, deviceId));
             }
         }
-        allBookmarksCache = remoteBookmarksForCache;
+        allBookmarksCache = flatBookmarks;
         
         if (data.commands) handleCommands(data.commands);
         return { status: 'success' };
@@ -372,12 +373,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     return acc;
                 }, {});
                 sendResponse(Object.values(devices));
-            } else if (request.type === 'SEARCH_TABS') {
+            } else if (request.type === 'SEARCH') {
                 const { apiUrl, userId } = await chrome.storage.sync.get(['apiUrl', 'userId']);
                 const query = request.query.toLowerCase();
-                let searchSource = [...allTabsCache, ...allBookmarksCache];
+                const mode = request.mode || 'tabs'; // 'tabs', 'bookmarks', or 'favorites'
 
-                if (request.searchScope === 'favorites') {
+                let searchSource = [];
+                
+                if (mode === 'tabs') {
+                    searchSource = allTabsCache;
+                } else if (mode === 'bookmarks') {
+                    searchSource = allBookmarksCache;
+                } else if (mode === 'favorites') {
                     if (apiUrl && userId) {
                         try {
                             const favResponse = await fetch(`${new URL('/api/favorites', apiUrl).href}?userId=${encodeURIComponent(userId)}`);
@@ -481,3 +488,4 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 console.log('Replica background script loaded and listeners attached.');
+
