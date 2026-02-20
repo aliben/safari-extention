@@ -211,6 +211,10 @@ const handleCommands = (commands) => {
             for (const url of command.payload.urls) {
                 chrome.tabs.create({ url: url, active: false });
             }
+        } else if (command.type === 'CLOSE_TAB' && command.payload?.url) {
+            chrome.tabs.query({ url: command.payload.url }, (tabs) => {
+                tabs.forEach(t => chrome.tabs.remove(t.id));
+            });
         }
     }
 };
@@ -674,6 +678,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                             searchSource = [];
                         }
                     }
+                } else if (mode === 'recentlyClosed') {
+                    try {
+                        const sessions = await chrome.sessions.getRecentlyClosed({ maxResults: 50 });
+                        searchSource = sessions
+                            .filter(s => s.tab && s.tab.url && !s.tab.url.startsWith('chrome://') && !s.tab.url.startsWith('about:'))
+                            .map(s => ({
+                                id: String(s.tab.sessionId || s.tab.url),
+                                url: s.tab.url,
+                                title: s.tab.title || s.tab.url,
+                                faviconUrl: (s.tab.favIconUrl && !s.tab.favIconUrl.startsWith('chrome://')) ? s.tab.favIconUrl : null,
+                                deviceId: 'local',
+                                deviceName: 'This Device',
+                                timestamp: s.lastModified ? s.lastModified * 1000 : Date.now(),
+                                isRecentlyClosed: true,
+                                sessionId: s.tab.sessionId,
+                            }));
+                    } catch(e) {
+                        console.error('Failed to get recently closed:', e);
+                        searchSource = [];
+                    }
                 }
 
                 let filtered = searchSource;
@@ -729,6 +753,55 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 } catch(e) {
                     sendResponse({ status: 'error', message: e.message });
                 }
+            } else if (request.type === 'SEND_TAB') {
+                const { url, targetDeviceId } = request;
+                const { apiUrl } = await chrome.storage.sync.get(['apiUrl']);
+                const accessToken = await getValidAccessToken();
+                if (!apiUrl || !accessToken) { sendResponse({ status: 'error', message: 'Not configured.' }); return; }
+                try {
+                    const res = await fetch(new URL('/api/sync', apiUrl).href, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+                        body: JSON.stringify({ command: { type: 'OPEN_TABS', payload: { urls: [url] } }, targetDeviceId }),
+                    });
+                    sendResponse(res.ok ? { status: 'success' } : { status: 'error', message: 'API error' });
+                } catch(e) { sendResponse({ status: 'error', message: e.message }); }
+            } else if (request.type === 'CLOSE_TAB') {
+                const { item } = request;
+                const { persistentDeviceId } = await chrome.storage.local.get('persistentDeviceId');
+                if (item.deviceId === persistentDeviceId || item.deviceId === 'local') {
+                    // Local: parse rawTabId from composite id (format: windowId-tabId)
+                    const rawTabId = parseInt(item.id.split('-').pop());
+                    if (!isNaN(rawTabId)) await chrome.tabs.remove(rawTabId).catch(() => {});
+                    allTabsCache = allTabsCache.filter(t => t.id !== item.id);
+                    sendResponse({ status: 'success' });
+                } else {
+                    // Remote: queue a CLOSE_TAB command to the target device
+                    const { apiUrl } = await chrome.storage.sync.get(['apiUrl']);
+                    const accessToken = await getValidAccessToken();
+                    if (!apiUrl || !accessToken) { sendResponse({ status: 'error', message: 'Not configured.' }); return; }
+                    try {
+                        const res = await fetch(new URL('/api/sync', apiUrl).href, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+                            body: JSON.stringify({ command: { type: 'CLOSE_TAB', payload: { url: item.url } }, targetDeviceId: item.deviceId }),
+                        });
+                        if (res.ok) {
+                            allTabsCache = allTabsCache.filter(t => t.id !== item.id);
+                            sendResponse({ status: 'success' });
+                        } else { sendResponse({ status: 'error', message: 'Failed to send close command.' }); }
+                    } catch(e) { sendResponse({ status: 'error', message: e.message }); }
+                }
+            } else if (request.type === 'RESTORE_TAB') {
+                const { sessionId, url } = request;
+                try {
+                    if (sessionId) {
+                        await chrome.sessions.restore(sessionId);
+                    } else if (url) {
+                        await chrome.tabs.create({ url, active: true });
+                    }
+                    sendResponse({ status: 'success' });
+                } catch(e) { sendResponse({ status: 'error', message: e.message }); }
             } else if (request.type === 'SIGN_IN') {
                 try {
                     const session = await signInWithPassword(request.email, request.password);

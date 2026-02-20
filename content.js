@@ -20,7 +20,9 @@
       iframe.style.height = '100%';
       iframe.style.border = 'none';
       iframe.style.zIndex = '2147483647'; // Max z-index
-      iframe.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
+      iframe.style.backgroundColor = 'transparent';
+      iframe.style.colorScheme = 'normal'; // Prevent host page color-scheme from affecting the iframe
+      iframe.setAttribute('allowtransparency', 'true');
       
       document.body.appendChild(iframe);
       document.body.style.overflow = 'hidden';

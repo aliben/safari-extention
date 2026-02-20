@@ -11,13 +11,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const historyModeButton = document.getElementById('history-mode-button');
     const tabsModeButton = document.getElementById('tabs-mode-button');
     const bookmarksModeButton = document.getElementById('bookmarks-mode-button');
+    const sendTabPanel = document.getElementById('send-tab-panel');
+    const sendTabLabel = document.getElementById('send-tab-label');
+    const sendDeviceList = document.getElementById('send-device-list');
 
     let selectedIndex = 0;
     let currentResults = [];
     let currentDevices = [];
     let selectedDeviceId = 'all';
     let currentSort = 'timestamp';
-    let currentSearchScope = 'tabs'; // 'tabs', 'bookmarks', 'favorites'
+    let currentSearchScope = 'tabs'; // 'tabs', 'bookmarks', 'favorites', 'history', 'recentlyClosed'
+    let sendPanelVisible = false;
+    let sendPanelActiveItem = null;
 
     function closeSpotlight() {
         window.parent.postMessage({ type: 'CLOSE_SPOTLIGHT' }, '*');
@@ -71,8 +76,13 @@ document.addEventListener('DOMContentLoaded', () => {
             pill.dataset.deviceId = device.id;
             
             const icon = document.createElement('span');
-            // Simplified icon logic for now, can be expanded
-            icon.textContent = device.type === 'phone' ? '📱' : '💻';
+            // SVG device icons instead of emoji
+            const isMobile = device.type === 'phone' || (device.name || '').toLowerCase().includes('android') || (device.name || '').toLowerCase().includes('iphone');
+            if (isMobile) {
+                icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><circle cx="12" cy="17" r="1"/></svg>`;
+            } else {
+                icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`;
+            }
 
             const name = document.createElement('span');
             name.textContent = device.name;
@@ -116,20 +126,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateSearchPill() {
-        if (currentSearchScope === 'favorites') {
-            searchPill.textContent = ''; // Clear previous content
-            
-            const text = document.createTextNode('Favorites ');
-            const closeButton = document.createElement('span');
-            closeButton.className = 'close-pill';
-            closeButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
-            closeButton.onclick = (e) => { e.stopPropagation(); setSearchScope('tabs'); };
-            searchPill.appendChild(text);
-            searchPill.appendChild(closeButton);
-            searchPill.classList.remove('hidden');
-        } else if (currentSearchScope === 'history') {
+        const pillLabels = {
+            favorites:      'Favorites',
+            history:        'History',
+            bookmarks:      'Bookmarks',
+            recentlyClosed: 'Recent',
+        };
+        const label = pillLabels[currentSearchScope];
+        if (label) {
             searchPill.textContent = '';
-            const text = document.createTextNode('History ');
+            const text = document.createTextNode(label + ' ');
             const closeButton = document.createElement('span');
             closeButton.className = 'close-pill';
             closeButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
@@ -146,13 +152,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentSearchScope === scope) return;
         currentSearchScope = scope;
         searchInput.value = '';
+        hideSendPanel();
 
         // Update active button
         tabsModeButton.classList.toggle('active', scope === 'tabs');
         bookmarksModeButton.classList.toggle('active', scope === 'bookmarks');
         if (historyModeButton) historyModeButton.classList.toggle('active', scope === 'history');
         
-        // Update pill for "f + space" and "h + space" modes
+        // Update pill for shortcut-activated modes
         updateSearchPill();
 
         fetchDevices();
@@ -160,6 +167,56 @@ document.addEventListener('DOMContentLoaded', () => {
         searchInput.focus();
     }
 
+    // --- Send-to-Device Panel ---
+    function showSendPanel(item) {
+        sendPanelActiveItem = item;
+        sendTabLabel.textContent = item.title || item.url;
+        sendDeviceList.innerHTML = '';
+        const otherDevices = currentDevices.filter(d => d.id !== item.deviceId);
+        if (otherDevices.length === 0) {
+            const note = document.createElement('div');
+            note.className = 'send-no-devices';
+            note.textContent = 'No other synced devices. Open Replica on another device first.';
+            sendDeviceList.appendChild(note);
+        } else {
+            otherDevices.forEach((device, i) => {
+                const btn = document.createElement('button');
+                btn.className = 'send-device-btn';
+                const numBadge = document.createElement('span');
+                numBadge.className = 'send-device-num';
+                numBadge.textContent = i + 1;
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = device.name;
+                btn.appendChild(numBadge);
+                btn.appendChild(nameSpan);
+                btn.addEventListener('click', () => doSendTab(device.id, device.name));
+                sendDeviceList.appendChild(btn);
+            });
+        }
+        sendTabPanel.classList.remove('hidden');
+        sendPanelVisible = true;
+    }
+
+    function hideSendPanel() {
+        if (!sendPanelVisible && sendTabPanel) sendTabPanel.classList.add('hidden');
+        sendPanelVisible = false;
+        sendPanelActiveItem = null;
+    }
+
+    function doSendTab(targetDeviceId, deviceName) {
+        if (!sendPanelActiveItem) return;
+        chrome.runtime.sendMessage({ type: 'SEND_TAB', url: sendPanelActiveItem.url, targetDeviceId }, () => {
+            hideSendPanel();
+            const liItems = resultsList.getElementsByClassName('result-item');
+            if (selectedIndex > -1 && liItems[selectedIndex]) {
+                const feedback = document.createElement('div');
+                feedback.className = 'copied-feedback';
+                feedback.textContent = `Sent to ${deviceName}!`;
+                liItems[selectedIndex].appendChild(feedback);
+                setTimeout(() => feedback.remove(), 1500);
+            }
+        });
+    }
 
     function renderResults(results) {
         resultsList.innerHTML = '';
@@ -194,8 +251,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const favicon = document.createElement('img');
                 favicon.className = 'favicon';
-                favicon.src = item.isBookmark ? 'images/icon16.png' : (item.faviconUrl || 'images/icon16.png');
-                favicon.onerror = () => { favicon.src = 'images/icon16.png'; };
+                const faviconSvg = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23555' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><path d='M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z'/></svg>`;
+                favicon.src = item.isBookmark ? '' : (item.faviconUrl || faviconSvg);
+                favicon.onerror = () => { favicon.src = faviconSvg; };
+                if (item.isBookmark) {
+                    favicon.style.opacity = '0';
+                }
 
                 const details = document.createElement('div');
                 details.className = 'result-details';
@@ -203,7 +264,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 const title = document.createElement('div');
                 title.className = 'result-title';
                 
-                if (item.isHistory) {
+                if (item.isRecentlyClosed) {
+                    const undo = document.createElement('span');
+                    undo.className = 'favorite-icon';
+                    undo.style.color = '#a78bfa';
+                    undo.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>`;
+                    title.appendChild(undo);
+                } else if (item.isHistory) {
                     const clock = document.createElement('span');
                     clock.className = 'favorite-icon';
                     clock.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
@@ -221,7 +288,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 const url = document.createElement('div');
                 url.className = 'result-url';
-                url.textContent = item.url;
+                try {
+                    const parsed = new URL(item.url);
+                    url.textContent = parsed.hostname.replace(/^www\./, '') + (parsed.pathname !== '/' ? parsed.pathname : '');
+                } catch (_) {
+                    url.textContent = item.url;
+                }
 
                 details.appendChild(title);
                 details.appendChild(url);
@@ -234,13 +306,48 @@ document.addEventListener('DOMContentLoaded', () => {
                     device.textContent = item.deviceName || 'Unknown';
                 }
 
+                // Action buttons: send + close (only for open tabs)
+                const actions = document.createElement('div');
+                actions.className = 'result-actions';
+                if (!item.isHistory && !item.isFavorite && !item.isBookmark && !item.isRecentlyClosed) {
+                    const sendBtn = document.createElement('button');
+                    sendBtn.className = 'action-btn send-btn';
+                    sendBtn.title = 'Send to device (\u2318\u2192)';
+                    sendBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`;
+                    sendBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        updateSelection(index);
+                        showSendPanel(item);
+                    });
+                    actions.appendChild(sendBtn);
+
+                    const closeBtn = document.createElement('button');
+                    closeBtn.className = 'action-btn close-btn';
+                    closeBtn.title = 'Close tab (\u2318\u232b)';
+                    closeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+                    closeBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        chrome.runtime.sendMessage({ type: 'CLOSE_TAB', item }, (resp) => {
+                            if (resp?.status === 'success') {
+                                const idx = currentResults.indexOf(item);
+                                if (idx > -1) { currentResults.splice(idx, 1); renderResults(currentResults); }
+                            }
+                        });
+                    });
+                    actions.appendChild(closeBtn);
+                }
+
                 li.appendChild(favicon);
                 li.appendChild(details);
                 li.appendChild(device);
+                li.appendChild(actions);
 
                 li.addEventListener('mouseover', () => updateSelection(index));
                 li.addEventListener('click', () => {
-                    if (item.url) {
+                    if (item.isRecentlyClosed) {
+                        chrome.runtime.sendMessage({ type: 'RESTORE_TAB', sessionId: item.sessionId, url: item.url });
+                        closeSpotlight();
+                    } else if (item.url) {
                         chrome.tabs.create({ url: item.url, active: true });
                         closeSpotlight();
                     }
@@ -250,11 +357,17 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             updateSelection(0);
         } else {
-            const li = document.createElement('li');
-            li.className = 'result-item';
-            li.style.justifyContent = 'center';
-            li.textContent = 'No results found.';
-            resultsList.appendChild(li);
+            const emptyState = document.createElement('li');
+            emptyState.className = 'result-item empty-state';
+            const scopeLabels = { tabs: 'open tabs', bookmarks: 'bookmarks', favorites: 'favorites', history: 'history', recentlyClosed: 'recently closed tabs' };
+            const scopeLabel = scopeLabels[currentSearchScope] || 'results';
+            emptyState.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <div>
+                  <div class="empty-state-text">No ${scopeLabel} found</div>
+                  ${searchInput.value ? `<div class="empty-state-sub">Try a different search term</div>` : `<div class="empty-state-sub">Nothing here yet</div>`}
+                </div>`;
+            resultsList.appendChild(emptyState);
         }
     }
 
@@ -289,27 +402,66 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     searchInput.addEventListener('input', (e) => {
-        if (searchInput.value === 'f ') {
-            setSearchScope('favorites');
-            return;
-        }
-        if (searchInput.value === 'h ') {
-            setSearchScope('history');
-            return;
-        }
+        if (searchInput.value === 'f ') { setSearchScope('favorites'); return; }
+        if (searchInput.value === 'h ') { setSearchScope('history'); return; }
+        if (searchInput.value === 'b ') { setSearchScope('bookmarks'); return; }
+        if (searchInput.value === 'r ') { setSearchScope('recentlyClosed'); return; }
         performSearch();
     });
 
 
     searchInput.addEventListener('keydown', (e) => {
         const items = resultsList.getElementsByClassName('result-item');
+
+        // Escape: cancel send panel first, then close spotlight
         if (e.key === 'Escape') {
+            if (sendPanelVisible) { hideSendPanel(); return; }
             closeSpotlight();
             return;
         }
-        
+
+        // Number keys 1–9 select a device in the send panel
+        if (sendPanelVisible && e.key >= '1' && e.key <= '9') {
+            e.preventDefault();
+            const idx = parseInt(e.key) - 1;
+            const deviceBtns = sendDeviceList.querySelectorAll('.send-device-btn');
+            if (deviceBtns[idx]) deviceBtns[idx].click();
+            return;
+        }
+
+        // ⌘⌫ / Ctrl+Backspace — close the selected tab
+        if (e.key === 'Backspace' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            if (selectedIndex > -1 && currentResults[selectedIndex]) {
+                const item = currentResults[selectedIndex];
+                const liItems = resultsList.getElementsByClassName('result-item');
+                if (liItems[selectedIndex]) liItems[selectedIndex].style.opacity = '0.4';
+                chrome.runtime.sendMessage({ type: 'CLOSE_TAB', item }, (resp) => {
+                    if (resp?.status === 'success') {
+                        currentResults.splice(selectedIndex, 1);
+                        renderResults(currentResults);
+                    } else {
+                        const li2 = resultsList.getElementsByClassName('result-item')[selectedIndex];
+                        if (li2) li2.style.opacity = '';
+                    }
+                });
+            }
+            return;
+        }
+
+        // ⌘→ / Ctrl+→ — toggle send-to-device panel
+        if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            if (sendPanelVisible) {
+                hideSendPanel();
+            } else if (selectedIndex > -1 && currentResults[selectedIndex]) {
+                showSendPanel(currentResults[selectedIndex]);
+            }
+            return;
+        }
+
         if (e.key === 'Backspace' && searchInput.value === '') {
-            if (currentSearchScope === 'favorites' || currentSearchScope === 'history') {
+            if (['favorites', 'history', 'recentlyClosed', 'bookmarks'].includes(currentSearchScope)) {
                 setSearchScope('tabs');
             }
         }

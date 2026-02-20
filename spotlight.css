@@ -1,11 +1,13 @@
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: transparent;
+  background-color: rgba(0, 0, 0, 0.35);
   color: #EAEAEA;
   margin: 0;
   padding: 0;
   display: flex;
   justify-content: center;
+  /* Ensure the body itself is always dark — prevents host page color-scheme bleed */
+  color-scheme: dark;
 }
 
 @keyframes gradient-flow {
@@ -113,26 +115,42 @@ body {
 
 .tab-button {
     flex: 1;
-    padding: 8px 16px;
-    background-color: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.7);
-    border: 1px solid transparent;
-    border-radius: 6px;
-    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 16px;
+    background-color: rgba(255, 255, 255, 0.07);
+    color: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 7px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease-in-out;
+    transition: all 0.15s ease-in-out;
+    letter-spacing: 0.01em;
+}
+
+.tab-button svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    opacity: 0.8;
 }
 
 .tab-button:hover {
-    background-color: rgba(255, 255, 255, 0.15);
-    color: white;
+    background-color: rgba(255, 255, 255, 0.13);
+    color: rgba(255, 255, 255, 0.9);
+    border-color: rgba(255, 255, 255, 0.15);
 }
 
 .tab-button.active {
-    background-color: #007AFF;
-    color: white;
-    border-color: rgba(0, 122, 255, 0.8);
+    background-color: rgba(0, 122, 255, 0.25);
+    color: #60aeff;
+    border-color: rgba(0, 122, 255, 0.5);
+}
+.tab-button.active svg {
+    opacity: 1;
 }
 
 
@@ -245,12 +263,16 @@ body {
 .result-item {
   display: flex;
   align-items: center;
-  padding: 12px;
+  padding: 10px 12px;
   border-radius: 8px;
   cursor: pointer;
-  transition: all 0.15s ease-in-out;
+  transition: background-color 0.12s ease-in-out, border-color 0.12s ease-in-out;
   position: relative;
   border-left: 2px solid transparent;
+}
+
+.result-item:hover:not(.selected) {
+  background-color: rgba(255, 255, 255, 0.06);
 }
 
 .result-item.selected {
@@ -301,24 +323,39 @@ body {
 }
 
 .result-url {
-  font-size: 12px;
-  color: #9E9E9E;
+  font-size: 11.5px;
+  color: #6e6e6e;
   text-overflow: ellipsis;
   overflow: hidden;
   margin-top: 2px;
   transition: color 0.15s ease-in-out;
+  font-variant-numeric: tabular-nums;
+}
+
+.result-item.selected .result-url {
+  color: rgba(96, 174, 255, 0.7);
 }
 
 .result-device {
     margin-left: auto;
     font-size: 11px;
-    background-color: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.7);
-    padding: 2px 6px;
-    border-radius: 4px;
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.5);
+    padding: 2px 7px;
+    border-radius: 5px;
     font-weight: 500;
     flex-shrink: 0;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out;
+    margin-left: 10px;
+}
+
+.result-item.selected .result-device {
+  background-color: rgba(0, 122, 255, 0.2);
+  color: rgba(96, 174, 255, 0.9);
 }
 
 .copied-feedback {
@@ -338,28 +375,71 @@ body {
 }
 
 #spotlight-footer {
-  padding: 8px 16px;
-  font-size: 11px;
-  color: #9E9E9E;
-  text-align: right;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 7px 14px;
+  font-size: 10.5px;
+  color: #666;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.footer-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #5a5a5a;
+}
+
+.footer-sep {
+  color: #3a3a3a;
+  user-select: none;
 }
 
 .key-combo {
-  background-color: rgba(255, 255, 255, 0.1);
-  padding: 2px 5px;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #aaa;
+  padding: 1px 5px;
   border-radius: 4px;
-  font-weight: 500;
-  margin: 0 2px;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  line-height: 1.5;
 }
 
-.key-combo svg {
-  width: 12px;
-  height: 12px;
-  color: #c7c7c7;
+/* --- Empty State --- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  gap: 10px;
+  color: #4a4a4a;
+}
+
+.empty-state svg {
+  width: 32px;
+  height: 32px;
+  color: #3a3a3a;
+  opacity: 0.8;
+}
+
+.empty-state-text {
+  font-size: 13px;
+  color: #5a5a5a;
+  font-weight: 500;
+}
+
+.empty-state-sub {
+  font-size: 11.5px;
+  color: #3e3e3e;
+  margin-top: -4px;
 }
 
 /* --- Sync Indicator --- */
@@ -380,5 +460,115 @@ body {
   color: rgba(255, 255, 255, 0.35);
 }
 
-    
+/* --- Send-to-Device Panel --- */
+#send-tab-panel {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 10px 12px;
+  background-color: rgba(139, 92, 246, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#send-tab-panel.hidden {
+  display: none;
+}
+.send-tab-header {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.45);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.send-tab-header span {
+  color: rgba(200, 180, 255, 0.85);
+  font-weight: 600;
+}
+#send-device-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.send-device-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background-color: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  border-radius: 7px;
+  color: rgba(200, 180, 255, 0.9);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+.send-device-btn:hover {
+  background-color: rgba(139, 92, 246, 0.3);
+  border-color: rgba(139, 92, 246, 0.6);
+  color: white;
+}
+.send-device-num {
+  background-color: rgba(139, 92, 246, 0.4);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 10px;
+  font-weight: 700;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.send-no-devices {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.3);
+  font-style: italic;
+}
 
+/* --- Per-item action buttons (close + send) --- */
+.result-actions {
+  display: none;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.result-item:hover .result-actions,
+.result-item.selected .result-actions {
+  display: flex;
+}
+.action-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 3px 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+  color: rgba(255, 255, 255, 0.35);
+  font-family: inherit;
+}
+.action-btn svg {
+  width: 12px;
+  height: 12px;
+}
+.action-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.8);
+}
+.close-btn:hover {
+  background-color: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #f87171;
+}
+.send-btn:hover {
+  background-color: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.3);
+  color: #c4b5fd;
+}

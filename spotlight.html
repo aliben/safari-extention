@@ -2,6 +2,8 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="dark">
   <title>Replica Search</title>
   <link rel="stylesheet" href="spotlight.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,7 +16,7 @@
       <div id="search-box">
         <svg id="search-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
         <div id="search-pill" class="hidden"></div>
-        <input type="text" id="search-input" placeholder="Search tabs · f+space favorites · h+space history..." autocomplete="off">
+        <input type="text" id="search-input" placeholder="Search tabs · b+space bookmarks · f+space favorites · h+space history · r+space recent..." autocomplete="off">
         <div id="sort-container">
           <button class="sort-button active" data-sort="timestamp" title="Sort by Date">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -28,8 +30,14 @@
         </div>
       </div>
        <div id="tabs-container">
-        <button id="tabs-mode-button" class="tab-button active">Open Tabs</button>
-        <button id="bookmarks-mode-button" class="tab-button">Bookmarks</button>
+        <button id="tabs-mode-button" class="tab-button active">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          Open Tabs
+        </button>
+        <button id="bookmarks-mode-button" class="tab-button">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+          Bookmarks
+        </button>
       </div>
       <div id="device-filter-container">
         <div id="device-filter-list">
@@ -39,16 +47,27 @@
       <div id="results-container">
         <ul id="results-list"></ul>
       </div>
+      <div id="send-tab-panel" class="hidden">
+        <div class="send-tab-header">Send <span id="send-tab-label"></span> to:</div>
+        <div id="send-device-list"></div>
+      </div>
       <div id="spotlight-footer">
-          Navigate with
-          <span class="key-combo"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></span>
-          /
-          <span class="key-combo"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>,
-          <span class="key-combo">Enter</span> to open,
-          <span class="key-combo">Cmd+C</span> to copy,
-          <span class="key-combo">Shift+Alt+F</span> to favorite,
-          <span class="key-combo">Esc</span> to close.
-        </div>
+        <span class="footer-hint"><span class="key-combo">↑↓</span> navigate</span>
+        <span class="footer-sep">·</span>
+        <span class="footer-hint"><span class="key-combo">↵</span> open</span>
+        <span class="footer-sep">·</span>
+        <span class="footer-hint"><span class="key-combo">⌘C</span> copy URL</span>
+        <span class="footer-sep">·</span>
+        <span class="footer-hint"><span class="key-combo">⌘⌫</span> close tab</span>
+        <span class="footer-sep">·</span>
+        <span class="footer-hint"><span class="key-combo">⌘→</span> send to device</span>
+        <span class="footer-sep">·</span>
+        <span class="footer-hint"><span class="key-combo">⇧⌥F</span> favorite</span>
+        <span class="footer-sep">·</span>
+        <span class="footer-hint"><span class="key-combo">b·</span> bookmarks <span class="key-combo">f·</span> favorites <span class="key-combo">h·</span> history <span class="key-combo">r·</span> recent</span>
+        <span class="footer-sep">·</span>
+        <span class="footer-hint"><span class="key-combo">Esc</span> close</span>
+      </div>
     </div>
   </div>
   <script src="spotlight.js"></script>
