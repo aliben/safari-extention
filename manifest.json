@@ -4,7 +4,7 @@
   "name": "Replica",
   "version": "1.0",
   "description": "Sync your open tabs across devices.",
-  "permissions": ["tabs", "storage", "scripting", "bookmarks"],
+  "permissions": ["tabs", "storage", "scripting", "bookmarks", "webNavigation"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html",

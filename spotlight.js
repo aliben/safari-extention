@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const deviceFilterList = document.getElementById('device-filter-list');
     const sortContainer = document.getElementById('sort-container');
     const searchPill = document.getElementById('search-pill');
+    const syncIndicator = document.getElementById('sync-indicator');
+    const historyModeButton = document.getElementById('history-mode-button');
     const tabsModeButton = document.getElementById('tabs-mode-button');
     const bookmarksModeButton = document.getElementById('bookmarks-mode-button');
 
@@ -100,6 +102,19 @@ document.addEventListener('DOMContentLoaded', () => {
         renderResults(currentResults); // Re-render with the new filter
     }
 
+    function formatRelativeTime(isoStringOrMs) {
+        const date = typeof isoStringOrMs === 'number' ? new Date(isoStringOrMs) : new Date(isoStringOrMs);
+        const diff = Date.now() - date.getTime();
+        const min  = Math.floor(diff / 60000);
+        const hr   = Math.floor(min  / 60);
+        const day  = Math.floor(hr   / 24);
+        if (min < 1)  return 'just now';
+        if (min < 60) return `${min}m ago`;
+        if (hr  < 24) return `${hr}h ago`;
+        if (day <  7) return `${day}d ago`;
+        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
+
     function updateSearchPill() {
         if (currentSearchScope === 'favorites') {
             searchPill.textContent = ''; // Clear previous content
@@ -108,11 +123,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const closeButton = document.createElement('span');
             closeButton.className = 'close-pill';
             closeButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
-            closeButton.onclick = (e) => {
-                e.stopPropagation();
-                setSearchScope('tabs');
-            };
-            
+            closeButton.onclick = (e) => { e.stopPropagation(); setSearchScope('tabs'); };
+            searchPill.appendChild(text);
+            searchPill.appendChild(closeButton);
+            searchPill.classList.remove('hidden');
+        } else if (currentSearchScope === 'history') {
+            searchPill.textContent = '';
+            const text = document.createTextNode('History ');
+            const closeButton = document.createElement('span');
+            closeButton.className = 'close-pill';
+            closeButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+            closeButton.onclick = (e) => { e.stopPropagation(); setSearchScope('tabs'); };
             searchPill.appendChild(text);
             searchPill.appendChild(closeButton);
             searchPill.classList.remove('hidden');
@@ -129,8 +150,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // Update active button
         tabsModeButton.classList.toggle('active', scope === 'tabs');
         bookmarksModeButton.classList.toggle('active', scope === 'bookmarks');
+        if (historyModeButton) historyModeButton.classList.toggle('active', scope === 'history');
         
-        // This is for the "f + space" mode
+        // Update pill for "f + space" and "h + space" modes
         updateSearchPill();
 
         fetchDevices();
@@ -181,7 +203,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const title = document.createElement('div');
                 title.className = 'result-title';
                 
-                if (item.isFavorite || item.isBookmark) {
+                if (item.isHistory) {
+                    const clock = document.createElement('span');
+                    clock.className = 'favorite-icon';
+                    clock.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
+                    title.appendChild(clock);
+                } else if (item.isFavorite || item.isBookmark) {
                     const star = document.createElement('span');
                     star.className = 'favorite-icon';
                     star.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`;
@@ -201,7 +228,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 const device = document.createElement('span');
                 device.className = 'result-device';
-                device.textContent = item.deviceName || 'Unknown';
+                if (item.isHistory && item.visitedAt) {
+                    device.textContent = (item.deviceName || 'Unknown') + ' · ' + formatRelativeTime(item.visitedAt);
+                } else {
+                    device.textContent = item.deviceName || 'Unknown';
+                }
 
                 li.appendChild(favicon);
                 li.appendChild(details);
@@ -262,6 +293,10 @@ document.addEventListener('DOMContentLoaded', () => {
             setSearchScope('favorites');
             return;
         }
+        if (searchInput.value === 'h ') {
+            setSearchScope('history');
+            return;
+        }
         performSearch();
     });
 
@@ -274,7 +309,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         if (e.key === 'Backspace' && searchInput.value === '') {
-            if (currentSearchScope === 'favorites') {
+            if (currentSearchScope === 'favorites' || currentSearchScope === 'history') {
                 setSearchScope('tabs');
             }
         }
@@ -326,6 +361,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     window.addEventListener('message', (event) => {
+        // Handle sync completion — refresh results and hide spinner
+        if (event.data.type === 'SYNC_COMPLETE') {
+            performSearch();
+            fetchDevices();
+            if (syncIndicator) syncIndicator.classList.add('hidden');
+            return;
+        }
         // Handle adding a favorite via shortcut
         if (event.data.type === 'ADD_TO_FAVORITES_COMMAND') {
             const items = resultsList.getElementsByClassName('result-item');

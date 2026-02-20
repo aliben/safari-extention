@@ -34,11 +34,15 @@
     <div id="auth-section" class="view">
       <div>
         <h2>Login</h2>
-        <p>Enter a username to identify yourself across devices.</p>
+        <p>Sign in to sync your tabs across devices.</p>
       </div>
       <div class="form-group">
-        <label for="userId">Username</label>
-        <input type="text" id="userId" placeholder="Enter username">
+        <label for="emailInput">Email</label>
+        <input type="email" id="emailInput" placeholder="you@example.com">
+      </div>
+      <div class="form-group">
+        <label for="passwordInput">Password</label>
+        <input type="password" id="passwordInput" placeholder="Your password">
       </div>
       <div class="button-group">
         <button id="backToUrlButton" class="secondary">Back</button>
@@ -50,7 +54,7 @@
     <!-- Step 3: Main Content -->
     <div id="main-content" class="view">
       <div class="user-info">
-        <span>Logged in as: <strong id="loggedInUser"></strong></span>
+        <span>Signed in as: <strong id="loggedInUser"></strong></span>
         <button id="logoutButton" class="logout-button" style="width: auto; padding: 4px 8px; font-size: 12px; height: auto;">Logout</button>
       </div>
 

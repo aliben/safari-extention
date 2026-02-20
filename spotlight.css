@@ -362,5 +362,23 @@ body {
   color: #c7c7c7;
 }
 
+/* --- Sync Indicator --- */
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+.sync-indicator.hidden {
+  display: none;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.sync-spin {
+  animation: spin 1s linear infinite;
+  color: rgba(255, 255, 255, 0.35);
+}
+
     
 

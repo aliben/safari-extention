@@ -12,7 +12,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const urlStatusEl = document.getElementById('url-status');
 
     // Auth View
-    const userIdInput = document.getElementById('userId');
+    const emailInput = document.getElementById('emailInput');
+    const passwordInput = document.getElementById('passwordInput');
     const loginButton = document.getElementById('loginButton');
     const backToUrlButton = document.getElementById('backToUrlButton');
     const authStatusEl = document.getElementById('auth-status');
@@ -114,11 +115,11 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // Initialization
-    chrome.storage.sync.get(['apiUrl', 'userId', 'deviceName', 'os'], (result) => {
+    chrome.storage.sync.get(['apiUrl', 'userEmail', 'accessToken', 'deviceName', 'os'], (result) => {
         if (result.apiUrl) {
             apiUrlInput.value = result.apiUrl;
-            if (result.userId) {
-                loggedInUserEl.textContent = result.userId;
+            if (result.accessToken && result.userEmail) {
+                loggedInUserEl.textContent = result.userEmail;
                 deviceNameInput.value = result.deviceName || `Chrome (${result.os || 'Unknown'})`;
                 showView(mainContent);
                 switchTab('tabs-panel');
@@ -155,22 +156,44 @@ document.addEventListener('DOMContentLoaded', () => {
     backToUrlButton.addEventListener('click', () => showView(urlSection));
 
     loginButton.addEventListener('click', () => {
-        const user = userIdInput.value.trim();
-        if (user) {
-            chrome.storage.sync.set({ userId: user }, () => {
-                loggedInUserEl.textContent = user;
+        const email = emailInput.value.trim();
+        const password = passwordInput.value;
+        if (!email || !password) {
+            authStatusEl.textContent = 'Please enter your email and password.';
+            return;
+        }
+        loginButton.disabled = true;
+        authStatusEl.textContent = 'Signing in...';
+        chrome.runtime.sendMessage({ type: 'SIGN_IN', email, password }, (response) => {
+            loginButton.disabled = false;
+            if (chrome.runtime.lastError) {
+                authStatusEl.textContent = `Error: ${chrome.runtime.lastError.message}`;
+                return;
+            }
+            if (response?.status === 'success') {
+                loggedInUserEl.textContent = response.email;
+                chrome.storage.sync.get(['deviceName', 'os'], (result) => {
+                    deviceNameInput.value = result.deviceName || `Chrome (${result.os || 'Unknown'})`;
+                });
                 showView(mainContent);
                 switchTab('tabs-panel');
-                triggerSync();
-            });
-        } else {
-            authStatusEl.textContent = 'Please enter a username.';
-        }
+                listCurrentTabs();
+                loadShortcuts();
+            } else {
+                authStatusEl.textContent = response?.message || 'Sign-in failed. Check your credentials.';
+            }
+        });
+    });
+
+    // Allow Enter key to trigger login
+    passwordInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') loginButton.click();
     });
 
     logoutButton.addEventListener('click', () => {
-        chrome.storage.sync.remove('userId', () => {
-            userIdInput.value = '';
+        chrome.runtime.sendMessage({ type: 'SIGN_OUT' }, () => {
+            emailInput.value = '';
+            passwordInput.value = '';
             showView(authSection);
         });
     });
@@ -204,22 +227,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     generateKeyButton.addEventListener('click', () => {
-        if (typeof nacl === 'undefined' || !nacl.util) {
+        if (typeof nacl === 'undefined') {
             keyStatusEl.textContent = 'Encryption library not loaded.';
             return;
         }
-        const { encodeBase64 } = nacl.util;
-        const key = encodeBase64(nacl.randomBytes(nacl.secretbox.keyLength));
+        const keyBytes = nacl.randomBytes(nacl.secretbox.keyLength);
+        const key = btoa(String.fromCharCode(...keyBytes));
         secretKeyInput.value = key;
         keyStatusEl.textContent = 'New key generated. Click "Save Key".';
     });
 
     saveKeyButton.addEventListener('click', () => {
-        if (typeof nacl === 'undefined' || !nacl.util) {
+        if (typeof nacl === 'undefined') {
             keyStatusEl.textContent = 'Encryption library not loaded.';
             return;
         }
-        const { decodeBase64 } = nacl.util;
+        const decodeBase64 = (b64) => new Uint8Array([...atob(b64)].map(c => c.charCodeAt(0)));
         const key = secretKeyInput.value.trim();
         if (key) {
             // Basic validation: Check if it's a valid Base64 string of the right length

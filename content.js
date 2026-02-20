@@ -42,6 +42,12 @@
         if (iframe && iframe.contentWindow) {
             iframe.contentWindow.postMessage({ type: 'ADD_TO_FAVORITES_COMMAND' }, '*');
         }
+    } else if (request.type === 'SYNC_COMPLETE') {
+        const iframe = document.getElementById(IFRAME_ID);
+        if (iframe && iframe.contentWindow) {
+            iframe.contentWindow.postMessage({ type: 'SYNC_COMPLETE' }, '*');
+        }
+        sendResponse({ status: 'done' });
     }
     return true;
   });
