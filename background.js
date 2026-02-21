@@ -792,6 +792,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         } else { sendResponse({ status: 'error', message: 'Failed to send close command.' }); }
                     } catch(e) { sendResponse({ status: 'error', message: e.message }); }
                 }
+            } else if (request.type === 'OPEN_TAB') {
+                const { item } = request;
+                const { persistentDeviceId } = await chrome.storage.local.get('persistentDeviceId');
+                const isLocal = item.deviceId === persistentDeviceId || item.deviceId === 'local' || !item.deviceId;
+                if (isLocal && item.id) {
+                    const rawTabId = parseInt(item.id.split('-').pop());
+                    if (!isNaN(rawTabId)) {
+                        try {
+                            await chrome.tabs.update(rawTabId, { active: true });
+                            const tab = await chrome.tabs.get(rawTabId);
+                            if (tab.windowId) await chrome.windows.update(tab.windowId, { focused: true });
+                            sendResponse({ status: 'success' });
+                            return;
+                        } catch (e) { /* tab may have closed; fall through to create */ }
+                    }
+                }
+                await chrome.tabs.create({ url: item.url, active: true });
+                sendResponse({ status: 'success' });
             } else if (request.type === 'RESTORE_TAB') {
                 const { sessionId, url } = request;
                 try {

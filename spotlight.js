@@ -352,7 +352,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         chrome.runtime.sendMessage({ type: 'RESTORE_TAB', sessionId: item.sessionId, url: item.url });
                         closeSpotlight();
                     } else if (item.url) {
-                        chrome.tabs.create({ url: item.url, active: true });
+                        chrome.runtime.sendMessage({ type: 'OPEN_TAB', item });
                         closeSpotlight();
                     }
                 });
