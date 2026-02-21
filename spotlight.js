@@ -176,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (otherDevices.length === 0) {
             const note = document.createElement('div');
             note.className = 'send-no-devices';
-            note.textContent = 'No other synced devices. Open Replica on another device first.';
+            note.textContent = 'No other synced devices. Open Tablicate on another device first.';
             sendDeviceList.appendChild(note);
         } else {
             otherDevices.forEach((device, i) => {

@@ -82,7 +82,7 @@ async function getValidAccessToken() {
 }
 
 // --- IndexedDB for Keys ---
-const DB_NAME = 'ReplicaCryptoDB';
+const DB_NAME = 'TablicateCryptoDB';
 const DB_VERSION = 1;
 const KEY_STORE_NAME = 'keys';
 
@@ -904,5 +904,5 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
     }
 }, { url: [{ schemes: ['http', 'https'] }] });
 
-console.log('Replica background script loaded and listeners attached.');
+console.log('Tablicate background script loaded and listeners attached.');
 

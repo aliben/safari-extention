@@ -41,7 +41,7 @@
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  width: 340px;
+  width: 360px;
   margin: 0;
   background-color: var(--background);
   color: var(--foreground);
@@ -57,9 +57,15 @@ body {
 .header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .logo {
@@ -366,4 +372,244 @@ li span {
 }
 .toggle-switch:checked::before {
   transform: translateX(18px);
+}
+
+/* ── Onboarding: step dots ─────────────────────────────── */
+.step-dots {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.step-dots.hidden {
+  display: none;
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.2s;
+}
+.dot.active {
+  background: var(--primary);
+}
+
+/* ── View headers ──────────────────────────────────────── */
+.view-header {
+  text-align: center;
+  padding: 8px 0 4px;
+}
+.view-header.left {
+  text-align: left;
+  padding: 0;
+}
+.step-icon {
+  font-size: 28px;
+  margin-bottom: 8px;
+}
+.lock-anim {
+  font-size: 36px;
+  margin-bottom: 8px;
+  display: inline-block;
+}
+@keyframes lock-pulse {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.08); }
+}
+.lock-anim.pulse {
+  animation: lock-pulse 2s ease-in-out 2;
+}
+
+/* ── E2EE feature list ─────────────────────────────────── */
+.e2ee-features {
+  background: var(--muted-background);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.e2ee-feat {
+  font-size: 12.5px;
+  color: var(--foreground);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.feat-check {
+  color: #22c55e;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ── Vertical button stack ─────────────────────────────── */
+.btn-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Key display ───────────────────────────────────────── */
+.key-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mono-key {
+  font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--foreground);
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  word-break: break-all;
+}
+.copy-btn {
+  width: 100% !important;
+  background-color: var(--secondary) !important;
+  color: var(--secondary-foreground) !important;
+  border-color: var(--border) !important;
+  padding: 7px 12px !important;
+  font-size: 13px !important;
+}
+.icon-btn {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  padding: 10px 12px !important;
+}
+
+/* ── Backend instructions card ─────────────────────────── */
+.instructions-card {
+  background: var(--muted-background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-size: 12.5px;
+}
+.instructions-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--foreground);
+  margin-bottom: 8px;
+}
+.instructions-list {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.instructions-list strong {
+  color: var(--foreground);
+}
+.link-text {
+  color: var(--primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ── Collapsible paste-key section ─────────────────────── */
+.paste-key-details {
+  margin-top: 4px;
+}
+.paste-key-details summary {
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+}
+.paste-key-details summary:hover {
+  color: var(--foreground);
+}
+
+/* ── Status pill ───────────────────────────────────────── */
+.status-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid;
+}
+.status-pill.success {
+  background: hsla(142, 71%, 45%, 0.1);
+  color: #22c55e;
+  border-color: hsla(142, 71%, 45%, 0.25);
+}
+.pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+  animation: pill-blink 2s ease-in-out infinite;
+}
+@keyframes pill-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ── Settings E2EE rows ────────────────────────────────── */
+.settings-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.e2ee-active-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: hsla(142, 71%, 45%, 0.08);
+  border: 1px solid hsla(142, 71%, 45%, 0.2);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  color: #16a34a;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.active-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  display: inline-block;
+  margin-right: 6px;
+  animation: pill-blink 2s ease-in-out infinite;
+}
+.e2ee-inactive-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--muted-background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  width: auto !important;
+  font-family: inherit;
 }

@@ -1,7 +1,7 @@
 
 {
   "manifest_version": 3,
-  "name": "Replica",
+  "name": "Tablicate",
   "version": "1.0",
   "description": "Sync your open tabs across devices.",
   "permissions": ["tabs", "storage", "scripting", "bookmarks", "webNavigation", "sessions"],
@@ -28,7 +28,7 @@
         "default": "Alt+L",
         "mac": "Alt+L"
       },
-      "description": "Open Replica Search"
+      "description": "Open Tablicate Search"
     },
     "add-to-favorites": {
       "suggested_key": {
