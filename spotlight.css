@@ -1,13 +1,18 @@
+html {
+  background: transparent !important;
+}
+
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: rgba(0, 0, 0, 0.35);
+  background-color: rgba(0, 0, 0, 0.55);
   color: #EAEAEA;
   margin: 0;
   padding: 0;
   display: flex;
   justify-content: center;
-  /* Ensure the body itself is always dark — prevents host page color-scheme bleed */
-  color-scheme: dark;
+  /* color-scheme is intentionally NOT set here — setting it on html/body causes the UA
+     stylesheet to force a near-black canvas background, making the backdrop look solid
+     black on any host page. It's set only on #spotlight-container below. */
 }
 
 #spotlight-wrapper {
@@ -19,17 +24,17 @@ body {
 
 #spotlight-container {
   width: 100%;
-  background: rgba(12, 12, 14, 0.92);
+  background: rgba(12, 12, 14, 0.96);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
   display: flex;
   flex-direction: column;
   max-height: 72vh;
   position: relative;
   overflow: hidden;
   box-shadow: 0 40px 100px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  /* color-scheme here ensures inputs, scrollbars, selects render in dark mode */
+  color-scheme: dark;
 }
 
 #search-box {
