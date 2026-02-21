@@ -297,13 +297,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 details.appendChild(title);
                 details.appendChild(url);
-                
+
+                // Device label — rendered above title, inside details (only for cross-device tabs)
                 const device = document.createElement('span');
                 device.className = 'result-device';
                 if (item.isHistory && item.visitedAt) {
                     device.textContent = (item.deviceName || 'Unknown') + ' · ' + formatRelativeTime(item.visitedAt);
                 } else {
-                    device.textContent = item.deviceName || 'Unknown';
+                    device.textContent = item.deviceName || '';
+                }
+                const showDevice = device.textContent && !item.isFavorite && !item.isBookmark && !item.isRecentlyClosed;
+                if (showDevice) {
+                    details.insertBefore(device, title);
                 }
 
                 // Action buttons: send + close (only for open tabs)
@@ -312,8 +317,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!item.isHistory && !item.isFavorite && !item.isBookmark && !item.isRecentlyClosed) {
                     const sendBtn = document.createElement('button');
                     sendBtn.className = 'action-btn send-btn';
-                    sendBtn.title = 'Send to device (\u2318\u2192)';
-                    sendBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`;
+                    sendBtn.title = 'Send to device (⌘→)';
+                    sendBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>⌘→`;
                     sendBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         updateSelection(index);
@@ -323,8 +328,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     const closeBtn = document.createElement('button');
                     closeBtn.className = 'action-btn close-btn';
-                    closeBtn.title = 'Close tab (\u2318\u232b)';
-                    closeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+                    closeBtn.title = 'Close tab (⌘⌫)';
+                    closeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>⌘⌫`;
                     closeBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         chrome.runtime.sendMessage({ type: 'CLOSE_TAB', item }, (resp) => {
@@ -339,7 +344,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 li.appendChild(favicon);
                 li.appendChild(details);
-                li.appendChild(device);
                 li.appendChild(actions);
 
                 li.addEventListener('mouseover', () => updateSelection(index));
