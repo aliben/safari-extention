@@ -188,10 +188,19 @@ let syncTimeout;
 let allTabsCache = [];
 let allBookmarksCache = [];
 
+// Delta-sync state (persisted to / restored from chrome.storage.local)
+let lastSyncedAt = null;        // ISO server timestamp of last successful sync
+let tabsSnapshot = {};          // Map<compositeTabId, {title, url}> as of last sync
+let bookmarksSnapshot = {};     // Map<nodeId, BookmarkNode> as of last sync
+
 // Restore persisted cache immediately so spotlight shows results on first open
-chrome.storage.local.get(['tabsCache', 'bookmarksCache'], (data) => {
+chrome.storage.local.get(['tabsCache', 'bookmarksCache', 'lastSyncedAt', 'tabsSnapshot', 'bookmarksSnapshot'], (data) => {
     if (data.tabsCache) allTabsCache = data.tabsCache;
     if (data.bookmarksCache) allBookmarksCache = data.bookmarksCache;
+    // Delta-sync watermarks / snapshots (restored into background memory for use during syncTabs)
+    if (data.lastSyncedAt) lastSyncedAt = data.lastSyncedAt;
+    if (data.tabsSnapshot) tabsSnapshot = data.tabsSnapshot;
+    if (data.bookmarksSnapshot) bookmarksSnapshot = data.bookmarksSnapshot;
 });
 
 const generateUniqueId = () => 'device-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
@@ -277,6 +286,34 @@ function flattenBookmarks(bookmarkNodes, deviceName, os, deviceId) {
 }
 
 
+/**
+ * Flatten a Chrome bookmark tree into a plain object map keyed by nodeId.
+ * Each entry is a normalised BookmarkNode suitable for the delta push payload.
+ *
+ * @param {BookmarkTreeNode[]} nodes - children array (pass result of getBookmarks())
+ * @param {string|null} parentId - parentId for the current level
+ * @returns {Object.<string, {nodeId,parentId,title,url,position,isFolder}>}
+ */
+function flattenBookmarkNodes(nodes, parentId = null) {
+    const result = {};
+    if (!nodes) return result;
+    for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        result[node.id] = {
+            nodeId:   node.id,
+            parentId: node.parentId || parentId || null,
+            title:    node.title || '',
+            url:      node.url || null,
+            position: i,
+            isFolder: !node.url,
+        };
+        if (node.children) {
+            Object.assign(result, flattenBookmarkNodes(node.children, node.id));
+        }
+    }
+    return result;
+}
+
 const syncTabs = async () => {
     console.log('Syncing tabs...');
     try {
@@ -291,7 +328,7 @@ const syncTabs = async () => {
             return { status: 'failure', message: 'Configuration missing.' };
         }
 
-        // Try to get/use the symmetric key from the key exchange if not manually set
+        // Use the granted key if no manually-set key exists
         let effectiveSymmetricKey = symmetricKey;
         if (!effectiveSymmetricKey) {
             const grantedKey = await getKey('grantedSymmetricKey');
@@ -303,46 +340,140 @@ const syncTabs = async () => {
             'Authorization': `Bearer ${accessToken}`,
         };
 
-        const tabs = await chrome.tabs.query({});
-        let tabsPayload = tabs
-            .filter(tab => tab.url && !tab.url.startsWith('chrome://'))
-            .map(tab => ({
-                id: `${tab.windowId}-${tab.id}`,
-                title: tab.title,
-                url: tab.url,
-                faviconUrl: tab.favIconUrl,
-                windowId: tab.windowId,
-                timestamp: Date.now(),
+        // ── Load persisted delta state ──────────────────────────────────────
+        const stored = await chrome.storage.local.get([
+            'lastSyncedAt', 'tabsSnapshot', 'bookmarksSnapshot', 'lastHistorySyncedAt',
+        ]);
+        const storedLastSyncedAt     = stored.lastSyncedAt      || null;
+        const storedTabsSnapshot     = stored.tabsSnapshot      || {};
+        const storedBmSnapshot       = stored.bookmarksSnapshot  || {};
+        const storedLastHistSync     = stored.lastHistorySyncedAt || 0;
+
+        const isFirstSync = !storedLastSyncedAt;
+
+        // ── Build tabs push delta ───────────────────────────────────────────
+        const allCurrentTabs = await chrome.tabs.query({});
+        const filteredTabs   = allCurrentTabs.filter(t => t.url && !t.url.startsWith('chrome://'));
+
+        // Current tab map: { "windowId-tabId": { title, url } }
+        const currentTabsMap = {};
+        filteredTabs.forEach(tab => {
+            currentTabsMap[`${tab.windowId}-${tab.id}`] = { title: tab.title, url: tab.url };
+        });
+
+        let tabsToUpsert  = [];
+        let deletedTabIds = [];
+
+        // Only keep http/https favicon URLs — extension-scheme URLs (chrome-extension://)
+        // are device-local and crash next/image on the web UI when synced to the server.
+        const safeFavicon = (url) => (url && /^https?:\/\//i.test(url)) ? url : null;
+
+        if (isFirstSync) {
+            // First sync: upload all open tabs
+            tabsToUpsert = filteredTabs.map(tab => ({
+                id:         `${tab.windowId}-${tab.id}`,
+                title:      tab.title,
+                url:        tab.url,
+                faviconUrl: safeFavicon(tab.favIconUrl),
+                windowId:   tab.windowId,
+                timestamp:  Date.now(),
             }));
-        
+        } else {
+            // Delta: only new or changed tabs
+            for (const [tabId, meta] of Object.entries(currentTabsMap)) {
+                const prev = storedTabsSnapshot[tabId];
+                if (!prev || prev.title !== meta.title || prev.url !== meta.url) {
+                    const raw = filteredTabs.find(t => `${t.windowId}-${t.id}` === tabId);
+                    tabsToUpsert.push({
+                        id:         tabId,
+                        title:      meta.title,
+                        url:        meta.url,
+                        faviconUrl: safeFavicon(raw?.favIconUrl),
+                        windowId:   raw?.windowId  || 0,
+                        timestamp:  Date.now(),
+                    });
+                }
+            }
+            // Closed tabs (were in last snapshot but no longer open)
+            for (const prevId of Object.keys(storedTabsSnapshot)) {
+                if (!currentTabsMap[prevId]) deletedTabIds.push(prevId);
+            }
+        }
+
+        // Encrypt tabs if a key is set
+        let tabsUpsertPayload = tabsToUpsert;
         if (effectiveSymmetricKey) {
-            tabsPayload = tabsPayload.map(tab => ({
-                id: tab.id,
+            tabsUpsertPayload = tabsToUpsert.map(tab => ({
+                id:          tab.id,
                 isEncrypted: true,
-                payload: encryptSymmetric({
-                    title: tab.title,
-                    url: tab.url,
+                payload:     encryptSymmetric({
+                    title:      tab.title,
+                    url:        tab.url,
                     faviconUrl: tab.faviconUrl,
-                    windowId: tab.windowId,
-                    timestamp: tab.timestamp,
+                    windowId:   tab.windowId,
+                    timestamp:  tab.timestamp,
                 }, effectiveSymmetricKey),
             }));
         }
 
-        const bookmarkTree = await chrome.bookmarks.getTree();
-        let bookmarksPayload = getBookmarks(bookmarkTree);
-        if (effectiveSymmetricKey) {
-            bookmarksPayload = recursiveEncryptBookmarks(bookmarksPayload, effectiveSymmetricKey);
+        // ── Build bookmarks push delta ──────────────────────────────────────
+        const bookmarkTree    = await chrome.bookmarks.getTree();
+        const bookmarkNodes   = getBookmarks(bookmarkTree);
+        const currentNodesMap = flattenBookmarkNodes(bookmarkNodes);
+
+        let bookmarksToUpsert = [];
+        let deletedNodeIds    = [];
+
+        if (isFirstSync) {
+            bookmarksToUpsert = Object.values(currentNodesMap);
+        } else {
+            for (const [nodeId, node] of Object.entries(currentNodesMap)) {
+                const prev = storedBmSnapshot[nodeId];
+                if (!prev ||
+                    prev.title    !== node.title    ||
+                    prev.url      !== node.url      ||
+                    prev.parentId !== node.parentId ||
+                    prev.position !== node.position) {
+                    bookmarksToUpsert.push(node);
+                }
+            }
+            for (const prevId of Object.keys(storedBmSnapshot)) {
+                if (!currentNodesMap[prevId]) deletedNodeIds.push(prevId);
+            }
         }
+
+        // Encrypt bookmark nodes if a key is set
+        let bookmarksUpsertPayload = bookmarksToUpsert;
+        if (effectiveSymmetricKey) {
+            bookmarksUpsertPayload = bookmarksToUpsert.map(node => ({
+                nodeId:      node.nodeId,
+                parentId:    node.parentId,
+                position:    node.position,
+                isFolder:    node.isFolder,
+                isEncrypted: true,
+                payload:     encryptSymmetric(
+                    { title: node.title, ...(node.url ? { url: node.url } : {}) },
+                    effectiveSymmetricKey
+                ),
+            }));
+        }
+
+        // ── POST /api/sync ──────────────────────────────────────────────────
+        console.log(`[sync] ${isFirstSync ? 'FIRST' : 'DELTA'} — ` +
+            `tabs upsert=${tabsUpsertPayload.length} del=${deletedTabIds.length}, ` +
+            `bm upsert=${bookmarksUpsertPayload.length} del=${deletedNodeIds.length}`);
 
         const finalUrl = new URL('/api/sync', apiUrl).href;
         const response = await fetch(finalUrl, {
             method: 'POST',
             headers: authHeaders,
             body: JSON.stringify({
-                tabs: tabsPayload,
-                bookmarks: bookmarksPayload,
-                deviceId: persistentDeviceId,
+                since: storedLastSyncedAt,
+                push: {
+                    tabs:      { upsert: tabsUpsertPayload,      deletedIds:     deletedTabIds   },
+                    bookmarks: { upsert: bookmarksUpsertPayload, deletedNodeIds: deletedNodeIds  },
+                },
+                deviceId:   persistentDeviceId,
                 deviceName: deviceName || 'Chrome Browser',
                 os,
             }),
@@ -350,57 +481,177 @@ const syncTabs = async () => {
 
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
-        console.log('Sync successful:', data);
+        console.log('Sync response:', data);
 
-        // Flush queued history visits to the API
+        // ── Flush history queue (with watermark dedup) ──────────────────────
         const { historyQueue = [] } = await chrome.storage.local.get('historyQueue');
-        if (historyQueue.length > 0) {
+        const newHistEntries = historyQueue.filter(e => e.visitedAt > storedLastHistSync);
+        if (newHistEntries.length > 0) {
             try {
                 const histFlush = await fetch(new URL('/api/history', apiUrl).href, {
                     method: 'POST',
                     headers: authHeaders,
-                    body: JSON.stringify({ entries: historyQueue }),
+                    body: JSON.stringify({ entries: newHistEntries }),
                 });
-                if (histFlush.ok) await chrome.storage.local.remove('historyQueue');
+                if (histFlush.ok) {
+                    const maxFlushed = Math.max(...newHistEntries.map(e => e.visitedAt));
+                    await chrome.storage.local.set({
+                        historyQueue:        historyQueue.filter(e => e.visitedAt > maxFlushed),
+                        lastHistorySyncedAt: maxFlushed,
+                    });
+                }
             } catch (e) {
                 console.error('Failed to flush history queue:', e);
             }
         }
 
-        // Decrypt and cache data
-        const localTabsForCache = tabsPayload.map(t => {
-            const content = effectiveSymmetricKey && t.isEncrypted ? decryptSymmetric(t.payload, effectiveSymmetricKey) : t;
-            return { ...content, id: t.id, os, deviceName: 'This Device', deviceId: persistentDeviceId };
-        });
+        // ── Rebuild allTabsCache ────────────────────────────────────────────
+        const serverTime = data.serverTime;
 
-        const remoteTabsForCache = (data.remoteTabs || []).map(t => {
-            const content = effectiveSymmetricKey && t.isEncrypted ? decryptSymmetric(t.payload, effectiveSymmetricKey) : t;
-            return { ...content, id: t.id, deviceId: t.deviceId, deviceName: t.deviceName, os: t.os };
-        });
+        // Local portion: always current open tabs (plaintext, even if uploaded encrypted)
+        const localTabsForCache = filteredTabs.map(tab => ({
+            id:         `${tab.windowId}-${tab.id}`,
+            title:      tab.title,
+            url:        tab.url,
+            faviconUrl: tab.favIconUrl,
+            windowId:   tab.windowId,
+            timestamp:  Date.now(),
+            deviceName: 'This Device',
+            deviceId:   persistentDeviceId,
+            os,
+        }));
 
-        allTabsCache = [...localTabsForCache, ...remoteTabsForCache];
-        
-        let flatBookmarks = [];
-        if (data.remoteBookmarks && typeof data.remoteBookmarks === 'object') {
-             for (const deviceId in data.remoteBookmarks) {
-                const deviceBookmarks = data.remoteBookmarks[deviceId];
-                const decryptedBookmarks = effectiveSymmetricKey ? recursiveDecryptBookmarks(deviceBookmarks, effectiveSymmetricKey) : deviceBookmarks;
-                // Find device info from remote tabs
-                const deviceInfoTab = allTabsCache.find(t => t.deviceId === deviceId);
-                const deviceName = deviceInfoTab ? deviceInfoTab.deviceName : 'Unknown Device';
-                const os = deviceInfoTab ? deviceInfoTab.os : 'unknown';
-                flatBookmarks.push(...flattenBookmarks(decryptedBookmarks, deviceName, os, deviceId));
+        // Remote portion: merge delta into previous remote cache
+        const prevRemoteTabs = isFirstSync
+            ? []
+            : allTabsCache.filter(t => t.deviceId !== persistentDeviceId);
+
+        const remoteDelta = data.remoteTabs || [];
+        let mergedRemoteTabs;
+
+        if (isFirstSync) {
+            mergedRemoteTabs = remoteDelta.map(t => {
+                const content = effectiveSymmetricKey && t.isEncrypted
+                    ? decryptSymmetric(t.payload, effectiveSymmetricKey) : t;
+                return { ...content, id: t.id, deviceId: t.deviceId, deviceName: t.deviceName, os: t.os };
+            });
+        } else {
+            const remoteMap = {};
+            prevRemoteTabs.forEach(t => { remoteMap[`${t.deviceId}:${t.id}`] = t; });
+            for (const t of remoteDelta) {
+                const key = `${t.deviceId}:${t.id}`;
+                if (t.deletedAt) {
+                    delete remoteMap[key];   // tombstone — remove from cache
+                } else {
+                    const content = effectiveSymmetricKey && t.isEncrypted
+                        ? decryptSymmetric(t.payload, effectiveSymmetricKey) : t;
+                    remoteMap[key] = { ...content, id: t.id, deviceId: t.deviceId, deviceName: t.deviceName, os: t.os };
+                }
             }
+            mergedRemoteTabs = Object.values(remoteMap);
         }
-        allBookmarksCache = flatBookmarks;
 
-        // Persist for instant spotlight on re-open
-        chrome.storage.local.set({ tabsCache: allTabsCache, bookmarksCache: allBookmarksCache }).catch(() => {});
-        
+        allTabsCache = [...localTabsForCache, ...mergedRemoteTabs];
+
+        // ── Rebuild allBookmarksCache ───────────────────────────────────────
+        // Build a device-info lookup from the combined tabs cache
+        const deviceInfoMap = {};
+        allTabsCache.forEach(t => {
+            if (t.deviceId && !deviceInfoMap[t.deviceId]) {
+                deviceInfoMap[t.deviceId] = { deviceName: t.deviceName, os: t.os };
+            }
+        });
+
+        const remoteBookmarkData = data.remoteBookmarks || {};
+        let flatBookmarks = [];
+
+        if (isFirstSync) {
+            // Full replace: build flat list from all remote bookmark nodes
+            for (const [devId, nodes] of Object.entries(remoteBookmarkData)) {
+                const dev = deviceInfoMap[devId] || { deviceName: 'Unknown Device', os: 'unknown' };
+                for (const node of nodes) {
+                    if (node.deletedAt || !node.url) continue;
+                    let { title, url } = node;
+                    if (effectiveSymmetricKey && node.isEncrypted && node.payload) {
+                        const dec = decryptSymmetric(node.payload, effectiveSymmetricKey);
+                        title = dec.title; url = dec.url;
+                    }
+                    flatBookmarks.push({
+                        id:         node.nodeId,
+                        nodeId:     node.nodeId,
+                        title,
+                        url,
+                        deviceId:   devId,
+                        deviceName: dev.deviceName,
+                        os:         dev.os,
+                        isBookmark: true,
+                        faviconUrl: 'images/bookmark-icon.png',
+                    });
+                }
+            }
+        } else {
+            // Delta merge: keep unchanged-device bookmarks, patch changed devices
+            const changedDevices = new Set(Object.keys(remoteBookmarkData));
+            const byKey = {};
+            allBookmarksCache
+                .filter(b => changedDevices.has(b.deviceId))
+                .forEach(b => { byKey[`${b.deviceId}:${b.nodeId || b.id}`] = b; });
+
+            for (const [devId, nodes] of Object.entries(remoteBookmarkData)) {
+                const dev = deviceInfoMap[devId] || { deviceName: 'Unknown Device', os: 'unknown' };
+                for (const node of nodes) {
+                    const key = `${devId}:${node.nodeId}`;
+                    if (node.deletedAt || !node.url) {
+                        delete byKey[key];
+                    } else {
+                        let { title, url } = node;
+                        if (effectiveSymmetricKey && node.isEncrypted && node.payload) {
+                            const dec = decryptSymmetric(node.payload, effectiveSymmetricKey);
+                            title = dec.title; url = dec.url;
+                        }
+                        byKey[key] = {
+                            id:         node.nodeId,
+                            nodeId:     node.nodeId,
+                            title,
+                            url,
+                            deviceId:   devId,
+                            deviceName: dev.deviceName,
+                            os:         dev.os,
+                            isBookmark: true,
+                            faviconUrl: 'images/bookmark-icon.png',
+                        };
+                    }
+                }
+            }
+            flatBookmarks = [
+                ...allBookmarksCache.filter(b => !changedDevices.has(b.deviceId)),
+                ...Object.values(byKey),
+            ];
+        }
+
+        // ── Always include the local device's own bookmarks ─────────────────
+        // The server omits them (neq device_id), so we re-read them from
+        // Chrome's own tree and splice them in, replacing any stale entries.
+        const localBmTree = await chrome.bookmarks.getTree();
+        const localBmRoots = getBookmarks(localBmTree);
+        const localFlatBookmarks = flattenBookmarks(localBmRoots, 'This Device', os, persistentDeviceId);
+        allBookmarksCache = [
+            ...flatBookmarks.filter(b => b.deviceId !== persistentDeviceId),
+            ...localFlatBookmarks,
+        ];
+
+        // ── Persist watermarks + snapshots ─────────────────────────────────
+        await chrome.storage.local.set({
+            tabsCache:         allTabsCache,
+            bookmarksCache:    allBookmarksCache,
+            lastSyncedAt:      serverTime,
+            tabsSnapshot:      currentTabsMap,
+            bookmarksSnapshot: currentNodesMap,
+        });
+
         if (data.commands) handleCommands(data.commands);
 
-        // --- E2EE Key Exchange ---
-        // After a successful sync, handle automatic key exchange for new devices
+        // E2EE Key Exchange
         await handleKeyExchange(apiUrl, accessToken, persistentDeviceId);
 
         return { status: 'success' };
@@ -843,8 +1094,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 await chrome.storage.sync.remove([
                     'accessToken', 'refreshToken', 'tokenExpiresAt', 'userId', 'userEmail',
                 ]);
+                // Clear delta-sync state so the next sign-in starts with a full first sync
+                await chrome.storage.local.remove([
+                    'lastSyncedAt', 'tabsSnapshot', 'bookmarksSnapshot', 'lastHistorySyncedAt',
+                    'tabsCache', 'bookmarksCache',
+                ]);
                 allTabsCache = [];
                 allBookmarksCache = [];
+                lastSyncedAt = null;
+                tabsSnapshot = {};
+                bookmarksSnapshot = {};
                 sendResponse({ status: 'success' });
             } else if (request.type === 'STORE_KEY') {
                 await saveKey(request.key);
