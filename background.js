@@ -187,6 +187,10 @@ function decryptSymmetric(messageWithNonceB64, keyB64) {
 let syncTimeout;
 let allTabsCache = [];
 let allBookmarksCache = [];
+let syncInFlightPromise = null;
+
+const REMOTE_BOOKMARKS_ROOT_TITLE = 'Replica Synced Bookmarks';
+const LOCKED_BOOKMARK_TITLE = 'Locked bookmark';
 
 // Delta-sync state (persisted to / restored from chrome.storage.local)
 let lastSyncedAt = null;        // ISO server timestamp of last successful sync
@@ -267,6 +271,7 @@ function flattenBookmarks(bookmarkNodes, deviceName, os, deviceId) {
     let bookmarks = [];
     if (!bookmarkNodes) return bookmarks;
     for (const node of bookmarkNodes) {
+        if (node._excludeFromReplicaSync) continue;
         if (node.url) {
             bookmarks.push({
                 ...node,
@@ -283,6 +288,315 @@ function flattenBookmarks(bookmarkNodes, deviceName, os, deviceId) {
         }
     }
     return bookmarks;
+}
+
+function getManagedFolderIdsFromState(syncState) {
+    const managedIds = new Set();
+    if (syncState?.remoteBookmarksRootId) managedIds.add(syncState.remoteBookmarksRootId);
+    if (syncState?.remoteBookmarkFolderMap) {
+        Object.values(syncState.remoteBookmarkFolderMap).forEach(id => {
+            if (id) managedIds.add(id);
+        });
+    }
+    return managedIds;
+}
+
+function filterManagedBookmarkNodes(currentNodesMap, managedFolderIds) {
+    if (!managedFolderIds || managedFolderIds.size === 0) return currentNodesMap;
+    const cache = {};
+    const isManagedNode = (nodeId) => {
+        if (!nodeId) return false;
+        if (cache[nodeId] !== undefined) return cache[nodeId];
+        if (managedFolderIds.has(nodeId)) {
+            cache[nodeId] = true;
+            return true;
+        }
+        const node = currentNodesMap[nodeId];
+        if (!node || !node.parentId) {
+            cache[nodeId] = false;
+            return false;
+        }
+        const result = isManagedNode(node.parentId);
+        cache[nodeId] = result;
+        return result;
+    };
+
+    return Object.fromEntries(
+        Object.entries(currentNodesMap).filter(([nodeId]) => !isManagedNode(nodeId))
+    );
+}
+
+function markManagedNodesExcluded(nodes, managedFolderIds, parentExcluded = false) {
+    if (!nodes) return;
+    for (const node of nodes) {
+        const nodeExcluded = parentExcluded || managedFolderIds.has(node.id);
+        if (nodeExcluded) node._excludeFromReplicaSync = true;
+        if (node.children) {
+            markManagedNodesExcluded(node.children, managedFolderIds, nodeExcluded);
+        }
+    }
+}
+
+async function getBookmarkNodeById(nodeId) {
+    if (!nodeId) return null;
+    try {
+        const nodes = await chrome.bookmarks.get(nodeId);
+        return nodes?.[0] || null;
+    } catch {
+        return null;
+    }
+}
+
+async function ensureReplicaRootFolder(syncState) {
+    if (syncState.remoteBookmarksRootId) {
+        const existing = await getBookmarkNodeById(syncState.remoteBookmarksRootId);
+        if (existing) return { ...syncState, remoteBookmarksRootId: existing.id };
+    }
+
+    const tree = await chrome.bookmarks.getTree();
+    const topChildren = tree?.[0]?.children || [];
+    const defaultParent = topChildren[0]?.id || '1';
+    const existingRoot = (await chrome.bookmarks.getChildren(defaultParent))
+        .find(n => !n.url && n.title === REMOTE_BOOKMARKS_ROOT_TITLE);
+
+    const rootFolder = existingRoot || await chrome.bookmarks.create({
+        parentId: defaultParent,
+        title: REMOTE_BOOKMARKS_ROOT_TITLE,
+    });
+
+    return { ...syncState, remoteBookmarksRootId: rootFolder.id };
+}
+
+function decodeRemoteBookmarkNode(node, effectiveSymmetricKey) {
+    let title = node.title || '';
+    let url = node.url || null;
+    let isLocked = false;
+
+    if (node.isEncrypted && node.payload) {
+        if (effectiveSymmetricKey) {
+            const dec = decryptSymmetric(node.payload, effectiveSymmetricKey);
+            title = dec?.title || title;
+            url = dec?.url || url;
+        } else {
+            isLocked = true;
+            title = title || LOCKED_BOOKMARK_TITLE;
+            url = null;
+        }
+    }
+
+    return {
+        title: title || (isLocked ? LOCKED_BOOKMARK_TITLE : ''),
+        url,
+        isLocked,
+    };
+}
+
+async function applyRemoteBookmarksToNativeTree(remoteBookmarkData, persistentDeviceId, effectiveSymmetricKey) {
+    if (!remoteBookmarkData || Object.keys(remoteBookmarkData).length === 0) return;
+
+    let syncState = await chrome.storage.local.get([
+        'remoteBookmarksRootId',
+        'remoteBookmarkFolderMap',
+        'remoteBookmarkNodeMap',
+    ]);
+
+    syncState = {
+        remoteBookmarksRootId: syncState.remoteBookmarksRootId || null,
+        remoteBookmarkFolderMap: syncState.remoteBookmarkFolderMap || {},
+        remoteBookmarkNodeMap: syncState.remoteBookmarkNodeMap || {},
+    };
+
+    syncState = await ensureReplicaRootFolder(syncState);
+    const nodeMap = { ...syncState.remoteBookmarkNodeMap };
+    const folderMap = { ...syncState.remoteBookmarkFolderMap };
+
+    await chrome.storage.local.set({ remoteBookmarkApplyMuteUntil: Date.now() + 6000 });
+
+    try {
+        for (const [devId, nodes] of Object.entries(remoteBookmarkData)) {
+            if (devId === persistentDeviceId) continue;
+            if (!Array.isArray(nodes) || nodes.length === 0) continue;
+
+            let deviceFolderId = folderMap[devId];
+            let deviceFolder = await getBookmarkNodeById(deviceFolderId);
+            const desiredDeviceTitle = nodes[0]?.deviceName || 'Unknown Device';
+
+            if (!deviceFolder) {
+                deviceFolder = await chrome.bookmarks.create({
+                    parentId: syncState.remoteBookmarksRootId,
+                    title: desiredDeviceTitle,
+                });
+            } else if (desiredDeviceTitle && deviceFolder.title !== desiredDeviceTitle) {
+                deviceFolder = await chrome.bookmarks.update(deviceFolder.id, { title: desiredDeviceTitle });
+            }
+            deviceFolderId = deviceFolder.id;
+            folderMap[devId] = deviceFolderId;
+
+            for (const node of nodes) {
+                const mapKey = `${devId}:${node.nodeId}`;
+                let mappedLocalId = nodeMap[mapKey];
+
+                if (mappedLocalId) {
+                    const existingLocal = await getBookmarkNodeById(mappedLocalId);
+                    if (!existingLocal) {
+                        delete nodeMap[mapKey];
+                        mappedLocalId = null;
+                    }
+                }
+
+                if (node.deletedAt) {
+                    if (mappedLocalId) {
+                        await chrome.bookmarks.removeTree(mappedLocalId).catch(() => {});
+                    }
+                    delete nodeMap[mapKey];
+                    continue;
+                }
+
+                const decoded = decodeRemoteBookmarkNode(node, effectiveSymmetricKey);
+                const isFolder = !!node.isFolder;
+                if (!isFolder && (!decoded.url || decoded.isLocked)) {
+                    // Keep locked items in Spotlight cache, but do not create native bookmarks for them.
+                    continue;
+                }
+
+                let parentLocalId = deviceFolderId;
+                if (node.parentId) {
+                    const parentKey = `${devId}:${node.parentId}`;
+                    const mappedParentId = nodeMap[parentKey];
+                    if (mappedParentId) {
+                        const parentNode = await getBookmarkNodeById(mappedParentId);
+                        if (parentNode && !parentNode.url) parentLocalId = mappedParentId;
+                    }
+                }
+
+                const bookmarkIndex = Number.isInteger(node.position) ? Math.max(0, node.position) : undefined;
+
+                if (mappedLocalId) {
+                    const existing = await getBookmarkNodeById(mappedLocalId);
+                    if (!existing) {
+                        delete nodeMap[mapKey];
+                        mappedLocalId = null;
+                    } else {
+                        const updatePayload = { title: decoded.title || '' };
+                        if (!isFolder) updatePayload.url = decoded.url;
+                        await chrome.bookmarks.update(mappedLocalId, updatePayload).catch(() => {});
+
+                        const requiresMove = existing.parentId !== parentLocalId ||
+                            (bookmarkIndex !== undefined && existing.index !== bookmarkIndex);
+                        if (requiresMove) {
+                            const movePayload = { parentId: parentLocalId };
+                            if (bookmarkIndex !== undefined) movePayload.index = bookmarkIndex;
+                            await chrome.bookmarks.move(mappedLocalId, movePayload).catch(() => {});
+                        }
+                        continue;
+                    }
+                }
+
+                const createPayload = {
+                    parentId: parentLocalId,
+                    title: decoded.title || '',
+                };
+                if (!isFolder) createPayload.url = decoded.url;
+                if (bookmarkIndex !== undefined) createPayload.index = bookmarkIndex;
+
+                const created = await chrome.bookmarks.create(createPayload).catch(() => null);
+                if (created?.id) {
+                    nodeMap[mapKey] = created.id;
+                }
+            }
+
+            // Reconcile parent relationships once all nodes in this delta batch are mapped.
+            for (const node of nodes) {
+                if (node.deletedAt) continue;
+                const mapKey = `${devId}:${node.nodeId}`;
+                const localId = nodeMap[mapKey];
+                if (!localId) continue;
+
+                const localNode = await getBookmarkNodeById(localId);
+                if (!localNode) {
+                    delete nodeMap[mapKey];
+                    continue;
+                }
+
+                let desiredParent = deviceFolderId;
+                if (node.parentId) {
+                    const mappedParent = nodeMap[`${devId}:${node.parentId}`];
+                    if (mappedParent) desiredParent = mappedParent;
+                }
+
+                const bookmarkIndex = Number.isInteger(node.position) ? Math.max(0, node.position) : undefined;
+                const requiresMove = localNode.parentId !== desiredParent ||
+                    (bookmarkIndex !== undefined && localNode.index !== bookmarkIndex);
+
+                if (requiresMove) {
+                    const movePayload = { parentId: desiredParent };
+                    if (bookmarkIndex !== undefined) movePayload.index = bookmarkIndex;
+                    await chrome.bookmarks.move(localId, movePayload).catch(() => {});
+                }
+            }
+        }
+    } finally {
+        await chrome.storage.local.set({
+            remoteBookmarksRootId: syncState.remoteBookmarksRootId,
+            remoteBookmarkFolderMap: folderMap,
+            remoteBookmarkNodeMap: nodeMap,
+            remoteBookmarkApplyMuteUntil: Date.now() + 1200,
+        });
+    }
+}
+
+async function bootstrapBookmarksCacheFromServer(apiUrl, accessToken, persistentDeviceId, effectiveSymmetricKey, os) {
+    if (!apiUrl || !accessToken) return;
+
+    const bootstrapRes = await fetch(new URL('/api/bookmarks/all', apiUrl).href, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+    });
+
+    if (!bootstrapRes.ok) {
+        throw new Error(`Bookmarks bootstrap failed: ${bootstrapRes.status}`);
+    }
+
+    const bootstrapData = await bootstrapRes.json();
+    const remoteBookmarkData = bootstrapData?.remoteBookmarks || {};
+
+    await applyRemoteBookmarksToNativeTree(remoteBookmarkData, persistentDeviceId, effectiveSymmetricKey);
+
+    const remoteFlat = [];
+    for (const [devId, nodes] of Object.entries(remoteBookmarkData)) {
+        if (devId === persistentDeviceId) continue;
+        for (const node of nodes || []) {
+            if (node.deletedAt) continue;
+            const decoded = decodeRemoteBookmarkNode(node, effectiveSymmetricKey);
+            const title = decoded.title;
+            const url = decoded.url;
+            const isLocked = decoded.isLocked;
+            if (!url && !isLocked) continue;
+            remoteFlat.push({
+                id: node.nodeId,
+                nodeId: node.nodeId,
+                title,
+                url,
+                deviceId: devId,
+                deviceName: node.deviceName || 'Unknown Device',
+                os: node.os || 'unknown',
+                isBookmark: true,
+                isLocked,
+                faviconUrl: 'images/bookmark-icon.png',
+            });
+        }
+    }
+
+    const localBmTree = await chrome.bookmarks.getTree();
+    const localBmRoots = getBookmarks(localBmTree);
+    const latestSyncState = await chrome.storage.local.get(['remoteBookmarksRootId', 'remoteBookmarkFolderMap']);
+    const latestManagedFolderIds = getManagedFolderIdsFromState(latestSyncState);
+    markManagedNodesExcluded(localBmRoots, latestManagedFolderIds);
+    const localFlatBookmarks = flattenBookmarks(localBmRoots, 'This Device', os, persistentDeviceId);
+
+    allBookmarksCache = [...remoteFlat, ...localFlatBookmarks];
+    await chrome.storage.local.set({ bookmarksCache: allBookmarksCache });
+    console.log(`[sync] Bootstrapped bookmarks cache: remote=${remoteFlat.length}, local=${localFlatBookmarks.length}`);
 }
 
 
@@ -315,9 +629,16 @@ function flattenBookmarkNodes(nodes, parentId = null) {
 }
 
 const syncTabs = async () => {
+    if (syncInFlightPromise) {
+        return syncInFlightPromise;
+    }
+
+    syncInFlightPromise = (async () => {
     console.log('Syncing tabs...');
+    let apiUrlForError = '';
     try {
         const { apiUrl, deviceName, os } = await chrome.storage.sync.get(['apiUrl', 'deviceName', 'os']);
+        apiUrlForError = apiUrl || '';
         const { persistentDeviceId } = await chrome.storage.local.get('persistentDeviceId');
         const keyInfo = await getKey('symmetricKey');
         const symmetricKey = keyInfo ? keyInfo.key : null;
@@ -340,14 +661,24 @@ const syncTabs = async () => {
             'Authorization': `Bearer ${accessToken}`,
         };
 
+        if (allBookmarksCache.length === 0) {
+            try {
+                await bootstrapBookmarksCacheFromServer(apiUrl, accessToken, persistentDeviceId, effectiveSymmetricKey, os);
+            } catch (e) {
+                console.warn('[sync] Bookmark bootstrap skipped:', e?.message || e);
+            }
+        }
+
         // ── Load persisted delta state ──────────────────────────────────────
         const stored = await chrome.storage.local.get([
             'lastSyncedAt', 'tabsSnapshot', 'bookmarksSnapshot', 'lastHistorySyncedAt',
+            'remoteBookmarksRootId', 'remoteBookmarkFolderMap',
         ]);
         const storedLastSyncedAt     = stored.lastSyncedAt      || null;
         const storedTabsSnapshot     = stored.tabsSnapshot      || {};
         const storedBmSnapshot       = stored.bookmarksSnapshot  || {};
         const storedLastHistSync     = stored.lastHistorySyncedAt || 0;
+        const managedFolderIds = getManagedFolderIdsFromState(stored);
 
         const isFirstSync = !storedLastSyncedAt;
 
@@ -419,7 +750,8 @@ const syncTabs = async () => {
         // ── Build bookmarks push delta ──────────────────────────────────────
         const bookmarkTree    = await chrome.bookmarks.getTree();
         const bookmarkNodes   = getBookmarks(bookmarkTree);
-        const currentNodesMap = flattenBookmarkNodes(bookmarkNodes);
+        const allCurrentNodesMap = flattenBookmarkNodes(bookmarkNodes);
+        const currentNodesMap = filterManagedBookmarkNodes(allCurrentNodesMap, managedFolderIds);
 
         let bookmarksToUpsert = [];
         let deletedNodeIds    = [];
@@ -586,17 +918,19 @@ const syncTabs = async () => {
         const remoteBookmarkData = data.remoteBookmarks || {};
         let flatBookmarks = [];
 
+        await applyRemoteBookmarksToNativeTree(remoteBookmarkData, persistentDeviceId, effectiveSymmetricKey);
+
         if (isFirstSync) {
             // Full replace: build flat list from all remote bookmark nodes
             for (const [devId, nodes] of Object.entries(remoteBookmarkData)) {
                 const tabDev = deviceInfoMap[devId];
                 for (const node of nodes) {
-                    if (node.deletedAt || !node.url) continue;
-                    let { title, url } = node;
-                    if (effectiveSymmetricKey && node.isEncrypted && node.payload) {
-                        const dec = decryptSymmetric(node.payload, effectiveSymmetricKey);
-                        title = dec.title; url = dec.url;
-                    }
+                    if (node.deletedAt) continue;
+                    const decoded = decodeRemoteBookmarkNode(node, effectiveSymmetricKey);
+                    const title = decoded.title;
+                    const url = decoded.url;
+                    const isLocked = decoded.isLocked;
+                    if (!url && !isLocked) continue;
                     flatBookmarks.push({
                         id:         node.nodeId,
                         nodeId:     node.nodeId,
@@ -606,6 +940,7 @@ const syncTabs = async () => {
                         deviceName: node.deviceName || tabDev?.deviceName || 'Unknown Device',
                         os:         node.os         || tabDev?.os         || 'unknown',
                         isBookmark: true,
+                        isLocked,
                         faviconUrl: 'images/bookmark-icon.png',
                     });
                 }
@@ -622,13 +957,16 @@ const syncTabs = async () => {
                 const tabDev = deviceInfoMap[devId];
                 for (const node of nodes) {
                     const key = `${devId}:${node.nodeId}`;
-                    if (node.deletedAt || !node.url) {
+                    if (node.deletedAt) {
                         delete byKey[key];
                     } else {
-                        let { title, url } = node;
-                        if (effectiveSymmetricKey && node.isEncrypted && node.payload) {
-                            const dec = decryptSymmetric(node.payload, effectiveSymmetricKey);
-                            title = dec.title; url = dec.url;
+                        const decoded = decodeRemoteBookmarkNode(node, effectiveSymmetricKey);
+                        const title = decoded.title;
+                        const url = decoded.url;
+                        const isLocked = decoded.isLocked;
+                        if (!url && !isLocked) {
+                            delete byKey[key];
+                            continue;
                         }
                         byKey[key] = {
                             id:         node.nodeId,
@@ -639,6 +977,7 @@ const syncTabs = async () => {
                             deviceName: node.deviceName || tabDev?.deviceName || 'Unknown Device',
                             os:         node.os         || tabDev?.os         || 'unknown',
                             isBookmark: true,
+                            isLocked,
                             faviconUrl: 'images/bookmark-icon.png',
                         };
                     }
@@ -655,6 +994,9 @@ const syncTabs = async () => {
         // Chrome's own tree and splice them in, replacing any stale entries.
         const localBmTree = await chrome.bookmarks.getTree();
         const localBmRoots = getBookmarks(localBmTree);
+        const latestSyncState = await chrome.storage.local.get(['remoteBookmarksRootId', 'remoteBookmarkFolderMap']);
+        const latestManagedFolderIds = getManagedFolderIdsFromState(latestSyncState);
+        markManagedNodesExcluded(localBmRoots, latestManagedFolderIds);
         const localFlatBookmarks = flattenBookmarks(localBmRoots, 'This Device', os, persistentDeviceId);
         allBookmarksCache = [
             ...flatBookmarks.filter(b => b.deviceId !== persistentDeviceId),
@@ -677,8 +1019,25 @@ const syncTabs = async () => {
 
         return { status: 'success' };
     } catch (error) {
+        const isFetchError = error instanceof TypeError && /fetch/i.test(error.message || '');
+        if (isFetchError) {
+            const syncEndpoint = apiUrlForError ? new URL('/api/sync', apiUrlForError).href : '[missing apiUrl]';
+            console.error(`[sync] Network fetch failed: ${syncEndpoint}`, error);
+        }
         console.error('Error syncing data:', error);
-        return { status: 'failure', message: error.message };
+        return {
+            status: 'failure',
+            message: isFetchError
+                ? `Failed to reach sync server (${apiUrlForError || 'apiUrl not configured'}).`
+                : error.message,
+        };
+    }
+    })();
+
+    try {
+        return await syncInFlightPromise;
+    } finally {
+        syncInFlightPromise = null;
     }
 };
 
@@ -858,12 +1217,17 @@ chrome.tabs.onCreated.addListener(debouncedSync);
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => { if (changeInfo.status === 'complete' || changeInfo.title || changeInfo.url) debouncedSync(); });
 chrome.tabs.onRemoved.addListener(debouncedSync);
 chrome.tabs.onReplaced.addListener(debouncedSync);
-chrome.bookmarks.onCreated.addListener(debouncedSync);
-chrome.bookmarks.onRemoved.addListener(debouncedSync);
-chrome.bookmarks.onChanged.addListener(debouncedSync);
-chrome.bookmarks.onMoved.addListener(debouncedSync);
-chrome.bookmarks.onChildrenReordered.addListener(debouncedSync);
-chrome.bookmarks.onImportEnded.addListener(debouncedSync);
+const debouncedSyncIfNotApplyingRemoteBookmarks = async () => {
+    const { remoteBookmarkApplyMuteUntil = 0 } = await chrome.storage.local.get('remoteBookmarkApplyMuteUntil');
+    if (Date.now() < remoteBookmarkApplyMuteUntil) return;
+    debouncedSync();
+};
+chrome.bookmarks.onCreated.addListener(debouncedSyncIfNotApplyingRemoteBookmarks);
+chrome.bookmarks.onRemoved.addListener(debouncedSyncIfNotApplyingRemoteBookmarks);
+chrome.bookmarks.onChanged.addListener(debouncedSyncIfNotApplyingRemoteBookmarks);
+chrome.bookmarks.onMoved.addListener(debouncedSyncIfNotApplyingRemoteBookmarks);
+chrome.bookmarks.onChildrenReordered.addListener(debouncedSyncIfNotApplyingRemoteBookmarks);
+chrome.bookmarks.onImportEnded.addListener(debouncedSyncIfNotApplyingRemoteBookmarks);
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     (async () => {
@@ -1075,6 +1439,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 }
             } else if (request.type === 'OPEN_TAB') {
                 const { item } = request;
+                if (item?.isLocked || !item?.url) {
+                    sendResponse({ status: 'error', message: 'Bookmark is locked on this device.' });
+                    return;
+                }
                 const { persistentDeviceId } = await chrome.storage.local.get('persistentDeviceId');
                 const isLocal = item.deviceId === persistentDeviceId || item.deviceId === 'local' || !item.deviceId;
                 if (isLocal && item.id) {

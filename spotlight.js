@@ -249,7 +249,8 @@ document.addEventListener('DOMContentLoaded', () => {
             filteredResults.forEach((item, index) => {
                 const li = document.createElement('li');
                 li.className = 'result-item';
-                li.dataset.url = item.url;
+                li.dataset.url = item.url || '';
+                li.dataset.openable = item.url ? '1' : '0';
                 li.dataset.index = index;
 
                 const favicon = document.createElement('img');
@@ -278,6 +279,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     clock.className = 'favorite-icon';
                     clock.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
                     title.appendChild(clock);
+                } else if (item.isLocked) {
+                    const lock = document.createElement('span');
+                    lock.className = 'favorite-icon';
+                    lock.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>`;
+                    title.appendChild(lock);
                 } else if (item.isFavorite || item.isBookmark) {
                     const star = document.createElement('span');
                     star.className = 'favorite-icon';
@@ -291,11 +297,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 const url = document.createElement('div');
                 url.className = 'result-url';
-                try {
-                    const parsed = new URL(item.url);
-                    url.textContent = parsed.hostname.replace(/^www\./, '') + (parsed.pathname !== '/' ? parsed.pathname : '');
-                } catch (_) {
-                    url.textContent = item.url;
+                if (item.isLocked) {
+                    url.textContent = 'Encrypted bookmark (sync key required)';
+                } else {
+                    try {
+                        const parsed = new URL(item.url);
+                        url.textContent = parsed.hostname.replace(/^www\./, '') + (parsed.pathname !== '/' ? parsed.pathname : '');
+                    } catch (_) {
+                        url.textContent = item.url;
+                    }
                 }
 
                 details.appendChild(title);
@@ -475,7 +485,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        if (items.length === 0 || !items[0].dataset.url) return;
+        if (items.length === 0) return;
 
         if (e.key === 'ArrowDown') {
             e.preventDefault();
@@ -494,6 +504,7 @@ document.addEventListener('DOMContentLoaded', () => {
              e.preventDefault();
             if (selectedIndex > -1 && items[selectedIndex]) {
                 const urlToCopy = items[selectedIndex].dataset.url;
+                if (!urlToCopy) return;
                 window.parent.postMessage({ type: 'COPY_TEXT', text: urlToCopy }, '*');
                 
                 // Show feedback
