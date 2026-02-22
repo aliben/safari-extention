@@ -62,6 +62,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const favoriteShortcut  = document.getElementById('favoriteShortcut');
     const e2eeSettingsBlock = document.getElementById('e2ee-settings-block');
     const copySettingsKeyBtn= document.getElementById('copySettingsKeyBtn');
+    const clearTabsCacheBtn      = document.getElementById('clearTabsCacheBtn');
+    const clearBookmarksCacheBtn = document.getElementById('clearBookmarksCacheBtn');
+    const clearCacheStatusEl     = document.getElementById('clear-cache-status');
 
     // ── Helpers ────────────────────────────────────────────────────────────
     const sendMsg = (msg, cb) => chrome.runtime.sendMessage(msg, cb);
@@ -343,4 +346,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     manageShortcutsBtn.addEventListener('click', () => chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }));
+
+    clearTabsCacheBtn?.addEventListener('click', () => {
+        sendMsg({ type: 'CLEAR_TABS_CACHE' }, (res) => {
+            clearCacheStatusEl.textContent = res?.status === 'success' ? '\u2713 Tabs cache cleared.' : 'Failed.';
+            setTimeout(() => { clearCacheStatusEl.textContent = ''; }, 2500);
+        });
+    });
+
+    clearBookmarksCacheBtn?.addEventListener('click', () => {
+        sendMsg({ type: 'CLEAR_BOOKMARKS_CACHE' }, (res) => {
+            clearCacheStatusEl.textContent = res?.status === 'success' ? '\u2713 Bookmarks cache cleared.' : 'Failed.';
+            setTimeout(() => { clearCacheStatusEl.textContent = ''; }, 2500);
+        });
+    });
 });

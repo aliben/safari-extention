@@ -479,6 +479,27 @@ const syncTabs = async () => {
             }),
         });
 
+        if (response.status === 401) {
+            // Token rejected by the server — force a token refresh. If the refresh
+            // also fails it means the session was revoked; clear everything so the
+            // popup prompts the user to sign in again.
+            console.warn('[sync] 401 Unauthorized — attempting token refresh...');
+            const { refreshToken } = await chrome.storage.sync.get('refreshToken');
+            const newSession = refreshToken ? await refreshSession(refreshToken) : null;
+            if (newSession) {
+                const newExpiresAt = Math.floor(Date.now() / 1000) + (newSession.expires_in || 3600);
+                await chrome.storage.sync.set({
+                    accessToken:    newSession.access_token,
+                    refreshToken:   newSession.refresh_token,
+                    tokenExpiresAt: newExpiresAt,
+                });
+                console.log('[sync] Token refreshed, will retry on next sync cycle.');
+            } else {
+                console.warn('[sync] Refresh failed — clearing session.');
+                await chrome.storage.sync.remove(['accessToken', 'refreshToken', 'tokenExpiresAt', 'userId', 'userEmail']);
+            }
+            return { status: 'failure', message: 'Unauthorized. Please sign in again.' };
+        }
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         console.log('Sync response:', data);
@@ -568,7 +589,7 @@ const syncTabs = async () => {
         if (isFirstSync) {
             // Full replace: build flat list from all remote bookmark nodes
             for (const [devId, nodes] of Object.entries(remoteBookmarkData)) {
-                const dev = deviceInfoMap[devId] || { deviceName: 'Unknown Device', os: 'unknown' };
+                const tabDev = deviceInfoMap[devId];
                 for (const node of nodes) {
                     if (node.deletedAt || !node.url) continue;
                     let { title, url } = node;
@@ -582,8 +603,8 @@ const syncTabs = async () => {
                         title,
                         url,
                         deviceId:   devId,
-                        deviceName: dev.deviceName,
-                        os:         dev.os,
+                        deviceName: node.deviceName || tabDev?.deviceName || 'Unknown Device',
+                        os:         node.os         || tabDev?.os         || 'unknown',
                         isBookmark: true,
                         faviconUrl: 'images/bookmark-icon.png',
                     });
@@ -598,7 +619,7 @@ const syncTabs = async () => {
                 .forEach(b => { byKey[`${b.deviceId}:${b.nodeId || b.id}`] = b; });
 
             for (const [devId, nodes] of Object.entries(remoteBookmarkData)) {
-                const dev = deviceInfoMap[devId] || { deviceName: 'Unknown Device', os: 'unknown' };
+                const tabDev = deviceInfoMap[devId];
                 for (const node of nodes) {
                     const key = `${devId}:${node.nodeId}`;
                     if (node.deletedAt || !node.url) {
@@ -615,8 +636,8 @@ const syncTabs = async () => {
                             title,
                             url,
                             deviceId:   devId,
-                            deviceName: dev.deviceName,
-                            os:         dev.os,
+                            deviceName: node.deviceName || tabDev?.deviceName || 'Unknown Device',
+                            os:         node.os         || tabDev?.os         || 'unknown',
                             isBookmark: true,
                             faviconUrl: 'images/bookmark-icon.png',
                         };
@@ -856,6 +877,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         acc[tab.deviceId] = { id: tab.deviceId, name: tab.deviceName, type: getDeviceType(tab.os, tab.deviceName), count: 0 };
                     }
                     acc[tab.deviceId].count++;
+                    return acc;
+                }, {});
+                sendResponse(Object.values(devices));
+            } else if (request.type === 'GET_BOOKMARK_DEVICES') {
+                const devices = allBookmarksCache.reduce((acc, bm) => {
+                    if (!acc[bm.deviceId]) {
+                        acc[bm.deviceId] = { id: bm.deviceId, name: bm.deviceName, type: getDeviceType(bm.os, bm.deviceName), count: 0 };
+                    }
+                    acc[bm.deviceId].count++;
                     return acc;
                 }, {});
                 sendResponse(Object.values(devices));
@@ -1104,6 +1134,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 lastSyncedAt = null;
                 tabsSnapshot = {};
                 bookmarksSnapshot = {};
+                sendResponse({ status: 'success' });
+            } else if (request.type === 'CLEAR_TABS_CACHE') {
+                await chrome.storage.local.remove(['tabsCache', 'tabsSnapshot', 'lastSyncedAt']);
+                allTabsCache = [];
+                tabsSnapshot = {};
+                lastSyncedAt = null;
+                sendResponse({ status: 'success' });
+            } else if (request.type === 'CLEAR_BOOKMARKS_CACHE') {
+                await chrome.storage.local.remove(['bookmarksCache', 'bookmarksSnapshot', 'lastSyncedAt']);
+                allBookmarksCache = [];
+                bookmarksSnapshot = {};
+                lastSyncedAt = null;
                 sendResponse({ status: 'success' });
             } else if (request.type === 'STORE_KEY') {
                 await saveKey(request.key);

@@ -38,13 +38,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function fetchDevices() {
-        // Only fetch and show devices if we are in tabs mode
-        if (currentSearchScope === 'tabs') {
-            deviceFilterContainer.style.display = 'block';
-            chrome.runtime.sendMessage({ type: 'GET_DEVICES' }, (devices) => {
+        // Show device filter for tabs and bookmarks modes
+        if (currentSearchScope === 'tabs' || currentSearchScope === 'bookmarks') {
+            const msgType = currentSearchScope === 'bookmarks' ? 'GET_BOOKMARK_DEVICES' : 'GET_DEVICES';
+            chrome.runtime.sendMessage({ type: msgType }, (devices) => {
                 if (devices && devices.length > 0) {
                     currentDevices = devices;
+                    deviceFilterContainer.style.display = 'block';
                     renderDeviceFilters();
+                } else {
+                    deviceFilterContainer.style.display = 'none';
                 }
             });
         } else {
@@ -54,7 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     function renderDeviceFilters() {
         deviceFilterList.innerHTML = '';
-        if (currentSearchScope !== 'tabs') return;
+        if (currentSearchScope !== 'tabs' && currentSearchScope !== 'bookmarks') return;
 
         // Add "All Devices" pill
         const allPill = document.createElement('div');
@@ -224,9 +227,9 @@ document.addEventListener('DOMContentLoaded', () => {
         
         let filteredResults = currentResults;
         
-        // Only filter by device if in 'tabs' mode
-        if (currentSearchScope === 'tabs' && selectedDeviceId !== 'all') {
-            filteredResults = filteredResults.filter(tab => tab.deviceId === selectedDeviceId);
+        // Filter by device in tabs and bookmarks modes
+        if ((currentSearchScope === 'tabs' || currentSearchScope === 'bookmarks') && selectedDeviceId !== 'all') {
+            filteredResults = filteredResults.filter(item => item.deviceId === selectedDeviceId);
         }
 
         // Add favorite marker to results
@@ -306,7 +309,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     device.textContent = item.deviceName || '';
                 }
-                const showDevice = device.textContent && !item.isFavorite && !item.isBookmark && !item.isRecentlyClosed;
+                // Show device label for remote bookmarks; hide it for local bookmarks ("This Device")
+                const showDevice = device.textContent && !item.isFavorite && !item.isRecentlyClosed &&
+                    !(item.isBookmark && item.deviceName === 'This Device');
                 if (showDevice) {
                     details.insertBefore(device, title);
                 }
