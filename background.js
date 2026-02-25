@@ -628,7 +628,8 @@ function flattenBookmarkNodes(nodes, parentId = null) {
     return result;
 }
 
-const syncTabs = async () => {
+const syncTabs = async (options = {}) => {
+    const { forceFull = false } = options;
     if (syncInFlightPromise) {
         return syncInFlightPromise;
     }
@@ -680,7 +681,7 @@ const syncTabs = async () => {
         const storedLastHistSync     = stored.lastHistorySyncedAt || 0;
         const managedFolderIds = getManagedFolderIdsFromState(stored);
 
-        const isFirstSync = !storedLastSyncedAt;
+        const isFirstSync = forceFull || !storedLastSyncedAt;
 
         // ── Build tabs push delta ───────────────────────────────────────────
         const allCurrentTabs = await chrome.tabs.query({});
@@ -800,7 +801,7 @@ const syncTabs = async () => {
             method: 'POST',
             headers: authHeaders,
             body: JSON.stringify({
-                since: storedLastSyncedAt,
+                since: isFirstSync ? null : storedLastSyncedAt,
                 push: {
                     tabs:      { upsert: tabsUpsertPayload,      deletedIds:     deletedTabIds   },
                     bookmarks: { upsert: bookmarksUpsertPayload, deletedNodeIds: deletedNodeIds  },
@@ -1517,7 +1518,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 sendResponse({ status: 'success' });
             } else if (request.type === 'STORE_KEY') {
                 await saveKey(request.key);
-                sendResponse({ status: 'success' });
+                const forceRefresh = await syncTabs({ forceFull: true });
+                sendResponse({ status: 'success', refresh: forceRefresh });
             } else if (request.type === 'GET_KEY') {
                 const key = await getKey(request.keyId);
                 sendResponse(key);

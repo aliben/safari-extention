@@ -294,6 +294,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isValidKey(key)) { copyStatusEl.textContent = 'Generate or paste a valid key first.'; return; }
         sendMsg({ type: 'STORE_KEY', key: { id: 'symmetricKey', key } }, (res) => {
             if (res?.status === 'success') {
+                if (res?.refresh?.status === 'failure') {
+                    copyStatusEl.textContent = `Key saved, but refresh failed: ${res.refresh.message || 'Unknown error'}`;
+                }
                 const back = e2eeDoneBtn._backToSettings;
                 e2eeDoneBtn._backToSettings = false;
                 enterMain();
@@ -339,8 +342,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const key = secretKeyInput.value.trim();
         if (!isValidKey(key)) { keyStatusEl.textContent = 'Invalid key format.'; return; }
         sendMsg({ type: 'STORE_KEY', key: { id: 'symmetricKey', key } }, (res) => {
-            keyStatusEl.textContent = res?.status === 'success' ? 'Key saved!' : `Error: ${res?.message}`;
-            if (res?.status === 'success') { renderE2eeSettingsBlock(); triggerSync(); }
+            if (res?.status === 'success') {
+                keyStatusEl.textContent = res?.refresh?.status === 'failure'
+                    ? `Key saved, but refresh failed: ${res.refresh.message || 'Unknown error'}`
+                    : 'Key saved and data decrypted!';
+                renderE2eeSettingsBlock();
+            } else {
+                keyStatusEl.textContent = `Error: ${res?.message}`;
+            }
             setTimeout(() => { keyStatusEl.textContent = ''; }, 2500);
         });
     });

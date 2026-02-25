@@ -25,15 +25,15 @@
   "commands": {
     "toggle-search": {
       "suggested_key": {
-        "default": "Alt+L",
-        "mac": "Alt+L"
+        "default": "Alt+S",
+        "mac": "Alt+S"
       },
       "description": "Open Tablicate Search"
     },
     "add-to-favorites": {
       "suggested_key": {
-        "default": "Alt+Shift+F",
-        "mac": "Alt+Shift+F"
+        "default": "Alt+F",
+        "mac": "Alt+F"
       },
       "description": "Add Highlighted Tab to Favorites"
     }
