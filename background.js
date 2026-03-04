@@ -1007,10 +1007,25 @@ const syncTabs = async (options = {}) => {
         const newHistEntries = historyQueue.filter(e => e.visitedAt > storedLastHistSync);
         if (newHistEntries.length > 0) {
             try {
+                // Encrypt history entries if a symmetric key is available
+                const entriesToSend = newHistEntries.map(e => {
+                    if (effectiveSymmetricKey) {
+                        const plainPayload = { title: e.title, url: e.url, faviconUrl: e.faviconUrl };
+                        const payload = encryptSymmetric(plainPayload, effectiveSymmetricKey);
+                        return {
+                            ...e,
+                            title: '',
+                            faviconUrl: null,
+                            isEncrypted: true,
+                            payload,
+                        };
+                    }
+                    return e;
+                });
                 const histFlush = await fetch(new URL('/api/history', apiUrl).href, {
                     method: 'POST',
                     headers: authHeaders,
-                    body: JSON.stringify({ entries: newHistEntries }),
+                    body: JSON.stringify({ entries: entriesToSend }),
                 });
                 if (histFlush.ok) {
                     const maxFlushed = Math.max(...newHistEntries.map(e => e.visitedAt));

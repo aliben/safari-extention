@@ -69,6 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const clearTabsCacheBtn      = document.getElementById('clearTabsCacheBtn');
     const clearBookmarksCacheBtn = document.getElementById('clearBookmarksCacheBtn');
     const clearCacheStatusEl     = document.getElementById('clear-cache-status');
+    const lastSyncedAtEl           = document.getElementById('lastSyncedAt');
 
     // ── Helpers ────────────────────────────────────────────────────────────
     const sendMsg = (msg, cb) => chrome.runtime.sendMessage(msg, cb);
@@ -100,6 +101,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const orig = el.textContent;
             el.textContent = '\u2713 Copied!';
             setTimeout(() => { el.textContent = orig; }, 2000);
+        });
+    };
+
+    const formatRelativeTime = (iso) => {
+        if (!iso) return '';
+        const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+        if (diff < 60)    return 'Just now';
+        if (diff < 3600)   return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400)  return `${Math.floor(diff / 3600)}h ago`;
+        if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+        return new Date(iso).toLocaleDateString();
+    };
+
+    const updateLastSyncedDisplay = () => {
+        if (!lastSyncedAtEl) return;
+        chrome.storage.local.get(['lastSyncedAt'], (r) => {
+            lastSyncedAtEl.textContent = r.lastSyncedAt ? `Last synced: ${formatRelativeTime(r.lastSyncedAt)}` : '';
         });
     };
 
@@ -141,7 +159,7 @@ document.addEventListener('DOMContentLoaded', () => {
         sendMsg({ type: 'SYNC_TABS' }, (r) => {
             if (chrome.runtime.lastError) { statusEl.textContent = 'Sync failed.'; return; }
             statusEl.textContent = r?.status === 'success' ? 'Synced!' : `Failed: ${r?.message || ''}`;
-            if (r?.status === 'success') listCurrentTabs();
+            if (r?.status === 'success') { listCurrentTabs(); updateLastSyncedDisplay(); }
             setTimeout(() => { statusEl.textContent = ''; }, 3000);
         });
     };
@@ -209,6 +227,7 @@ document.addEventListener('DOMContentLoaded', () => {
         listCurrentTabs();
         loadShortcuts();
         renderE2eeSettingsBlock();
+        updateLastSyncedDisplay();
     };
 
     // ── Init ───────────────────────────────────────────────────────────────
