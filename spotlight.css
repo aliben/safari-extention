@@ -361,6 +361,13 @@ body {
     z-index: 10;
 }
 
+.copied-feedback.error-feedback {
+    background-color: #ef4444;
+    font-size: 12px;
+    padding: 0 16px;
+    text-align: center;
+}
+
 #spotlight-footer {
   padding: 8px 18px;
   font-size: 10.5px;
@@ -580,3 +587,68 @@ body {
   border-color: rgba(239, 68, 68, 0.35);
   color: #f87171;
 }
+
+/* ── Upgrade Overlay ─────────────────────────────────────────────────── */
+#upgrade-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 100;
+  border-radius: var(--radius, 12px);
+}
+.upgrade-overlay-card {
+  background: var(--bg, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 16px;
+  padding: 32px 28px 24px;
+  text-align: center;
+  max-width: 340px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.upgrade-overlay-icon {
+  margin-bottom: 12px;
+  color: #818cf8;
+}
+.upgrade-overlay-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text, #e2e8f0);
+  margin-bottom: 8px;
+}
+.upgrade-overlay-desc {
+  font-size: 13px;
+  color: var(--text-muted, #94a3b8);
+  margin-bottom: 20px;
+  line-height: 1.45;
+}
+.upgrade-overlay-btn {
+  display: inline-block;
+  background: linear-gradient(135deg, #6366f1, #818cf8);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 28px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 10px;
+  transition: opacity 0.15s;
+}
+.upgrade-overlay-btn:hover { opacity: 0.9; }
+.upgrade-overlay-dismiss {
+  display: block;
+  margin: 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-muted, #94a3b8);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.upgrade-overlay-dismiss:hover { color: var(--text, #e2e8f0); }

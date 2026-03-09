@@ -149,6 +149,9 @@ button.danger:hover {
   color: var(--destructive-foreground);
   border-color: var(--destructive);
 }
+button.full-width {
+  width: 100%;
+}
 
 
 .status-text {
@@ -250,6 +253,46 @@ li span {
   padding: 8px 12px;
   border-radius: var(--radius);
 }
+.user-info-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.plan-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.plan-badge.free { background: #e2e8f0; color: #475569; }
+.plan-badge.plus { background: #dbeafe; color: #2563eb; }
+.plan-badge.pro  { background: linear-gradient(135deg,#818cf8,#6366f1); color: #fff; }
+.plan-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--muted-background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.plan-banner-text { color: var(--muted); flex: 1; }
+.plan-banner-btn {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+.plan-banner-btn:hover { opacity: 0.9; }
 .user-info strong {
   font-weight: 600;
   color: var(--foreground);

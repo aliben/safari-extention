@@ -3,6 +3,15 @@
 if (typeof globalThis.chrome === 'undefined' && typeof globalThis.browser !== 'undefined') {
     globalThis.chrome = globalThis.browser;
 }
+// Safari defines both `chrome` and `browser`, but may only expose certain APIs
+// (like bookmarks) on `browser`. Merge missing namespaces onto `chrome`.
+if (typeof globalThis.browser !== 'undefined' && typeof globalThis.chrome !== 'undefined') {
+    for (const key of Object.keys(globalThis.browser)) {
+        if (!globalThis.chrome[key]) {
+            globalThis.chrome[key] = globalThis.browser[key];
+        }
+    }
+}
 // In Safari the background may run as a non-persistent page (scripts loaded via
 // manifest "scripts" array or background.html). In Chrome it's a true service worker.
 // Ensure nacl is available in every context.
@@ -34,6 +43,8 @@ if (typeof nacl === 'undefined') {
 // ---------------------------------------------------------------------------
 // These values are safe to embed in the extension: the anon key is public and
 // Row-Level Security policies on the server restrict what it can access.
+const HAS_BOOKMARKS_API = typeof chrome !== 'undefined' && !!chrome.bookmarks;
+
 const SUPABASE_URL = 'https://vtrceupoiaisfhejlbjm.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0cmNldXBvaWFpc2ZoZWpsYmptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2MTI1MTIsImV4cCI6MjA4NzE4ODUxMn0.gm4SO4G2Q7cEMk28t7CCwRquB-HBRZrQIkujVhN64wA';
 
@@ -110,7 +121,8 @@ async function refreshSession(refreshToken) {
 }
 
 async function signOut(accessToken) {
-    await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+    // Use scope=local so we only revoke THIS session, not all user sessions
+    await fetch(`${SUPABASE_URL}/auth/v1/logout?scope=local`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -484,7 +496,7 @@ function markManagedNodesExcluded(nodes, managedFolderIds, parentExcluded = fals
 }
 
 async function getBookmarkNodeById(nodeId) {
-    if (!nodeId) return null;
+    if (!nodeId || !HAS_BOOKMARKS_API) return null;
     try {
         const nodes = await chrome.bookmarks.get(nodeId);
         return nodes?.[0] || null;
@@ -538,6 +550,7 @@ function decodeRemoteBookmarkNode(node, effectiveSymmetricKey) {
 }
 
 async function applyRemoteBookmarksToNativeTree(remoteBookmarkData, persistentDeviceId, effectiveSymmetricKey) {
+    if (!HAS_BOOKMARKS_API) return;
     if (!remoteBookmarkData || Object.keys(remoteBookmarkData).length === 0) return;
 
     let syncState = await chrome.storage.local.get([
@@ -733,12 +746,15 @@ async function bootstrapBookmarksCacheFromServer(apiUrl, accessToken, persistent
         }
     }
 
-    const localBmTree = await chrome.bookmarks.getTree();
-    const localBmRoots = getBookmarks(localBmTree);
-    const latestSyncState = await chrome.storage.local.get(['remoteBookmarksRootId', 'remoteBookmarkFolderMap']);
-    const latestManagedFolderIds = getManagedFolderIdsFromState(latestSyncState);
-    markManagedNodesExcluded(localBmRoots, latestManagedFolderIds);
-    const localFlatBookmarks = flattenBookmarks(localBmRoots, 'This Device', os, persistentDeviceId);
+    let localFlatBookmarks = [];
+    if (HAS_BOOKMARKS_API) {
+        const localBmTree = await chrome.bookmarks.getTree();
+        const localBmRoots = getBookmarks(localBmTree);
+        const latestSyncState = await chrome.storage.local.get(['remoteBookmarksRootId', 'remoteBookmarkFolderMap']);
+        const latestManagedFolderIds = getManagedFolderIdsFromState(latestSyncState);
+        markManagedNodesExcluded(localBmRoots, latestManagedFolderIds);
+        localFlatBookmarks = flattenBookmarks(localBmRoots, 'This Device', os, persistentDeviceId);
+    }
 
     allBookmarksCache = [...remoteFlat, ...localFlatBookmarks];
     await chrome.storage.local.set({ bookmarksCache: allBookmarksCache });
@@ -895,46 +911,50 @@ const syncTabs = async (options = {}) => {
         }
 
         // ── Build bookmarks push delta ──────────────────────────────────────
-        const bookmarkTree    = await chrome.bookmarks.getTree();
-        const bookmarkNodes   = getBookmarks(bookmarkTree);
-        const allCurrentNodesMap = flattenBookmarkNodes(bookmarkNodes);
-        const currentNodesMap = filterManagedBookmarkNodes(allCurrentNodesMap, managedFolderIds);
-
+        let currentNodesMap = {};
         let bookmarksToUpsert = [];
         let deletedNodeIds    = [];
+        let bookmarksUpsertPayload = [];
 
-        if (isFirstSync) {
-            bookmarksToUpsert = Object.values(currentNodesMap);
-        } else {
-            for (const [nodeId, node] of Object.entries(currentNodesMap)) {
-                const prev = storedBmSnapshot[nodeId];
-                if (!prev ||
-                    prev.title    !== node.title    ||
-                    prev.url      !== node.url      ||
-                    prev.parentId !== node.parentId ||
-                    prev.position !== node.position) {
-                    bookmarksToUpsert.push(node);
+        if (HAS_BOOKMARKS_API) {
+            const bookmarkTree    = await chrome.bookmarks.getTree();
+            const bookmarkNodes   = getBookmarks(bookmarkTree);
+            const allCurrentNodesMap = flattenBookmarkNodes(bookmarkNodes);
+            currentNodesMap = filterManagedBookmarkNodes(allCurrentNodesMap, managedFolderIds);
+
+            if (isFirstSync) {
+                bookmarksToUpsert = Object.values(currentNodesMap);
+            } else {
+                for (const [nodeId, node] of Object.entries(currentNodesMap)) {
+                    const prev = storedBmSnapshot[nodeId];
+                    if (!prev ||
+                        prev.title    !== node.title    ||
+                        prev.url      !== node.url      ||
+                        prev.parentId !== node.parentId ||
+                        prev.position !== node.position) {
+                        bookmarksToUpsert.push(node);
+                    }
+                }
+                for (const prevId of Object.keys(storedBmSnapshot)) {
+                    if (!currentNodesMap[prevId]) deletedNodeIds.push(prevId);
                 }
             }
-            for (const prevId of Object.keys(storedBmSnapshot)) {
-                if (!currentNodesMap[prevId]) deletedNodeIds.push(prevId);
-            }
-        }
 
-        // Encrypt bookmark nodes if a key is set
-        let bookmarksUpsertPayload = bookmarksToUpsert;
-        if (effectiveSymmetricKey) {
-            bookmarksUpsertPayload = bookmarksToUpsert.map(node => ({
-                nodeId:      node.nodeId,
-                parentId:    node.parentId,
-                position:    node.position,
-                isFolder:    node.isFolder,
-                isEncrypted: true,
-                payload:     encryptSymmetric(
-                    { title: node.title, ...(node.url ? { url: node.url } : {}) },
-                    effectiveSymmetricKey
-                ),
-            }));
+            // Encrypt bookmark nodes if a key is set
+            bookmarksUpsertPayload = bookmarksToUpsert;
+            if (effectiveSymmetricKey) {
+                bookmarksUpsertPayload = bookmarksToUpsert.map(node => ({
+                    nodeId:      node.nodeId,
+                    parentId:    node.parentId,
+                    position:    node.position,
+                    isFolder:    node.isFolder,
+                    isEncrypted: true,
+                    payload:     encryptSymmetric(
+                        { title: node.title, ...(node.url ? { url: node.url } : {}) },
+                        effectiveSymmetricKey
+                    ),
+                }));
+            }
         }
 
         // ── POST /api/sync ──────────────────────────────────────────────────
@@ -979,6 +999,12 @@ const syncTabs = async (options = {}) => {
             }
             return { status: 'failure', message: 'Unauthorized. Please sign in again.' };
         }
+        if (response.status === 403) {
+            const errData = await response.json().catch(() => ({}));
+            const msg = errData.message || 'Access denied. Check your subscription plan.';
+            console.warn('[sync] 403 Forbidden:', msg);
+            return { status: 'failure', message: msg, upgrade: errData.upgrade ?? false };
+        }
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         console.log('Sync response:', data);
@@ -988,10 +1014,25 @@ const syncTabs = async (options = {}) => {
         const newHistEntries = historyQueue.filter(e => e.visitedAt > storedLastHistSync);
         if (newHistEntries.length > 0) {
             try {
+                // Encrypt history entries if a symmetric key is available
+                const entriesToSend = newHistEntries.map(e => {
+                    if (effectiveSymmetricKey) {
+                        const plainPayload = { title: e.title, url: e.url, faviconUrl: e.faviconUrl };
+                        const payload = encryptSymmetric(plainPayload, effectiveSymmetricKey);
+                        return {
+                            ...e,
+                            title: '',
+                            faviconUrl: null,
+                            isEncrypted: true,
+                            payload,
+                        };
+                    }
+                    return e;
+                });
                 const histFlush = await fetch(new URL('/api/history', apiUrl).href, {
                     method: 'POST',
                     headers: authHeaders,
-                    body: JSON.stringify({ entries: newHistEntries }),
+                    body: JSON.stringify({ entries: entriesToSend }),
                 });
                 if (histFlush.ok) {
                     const maxFlushed = Math.max(...newHistEntries.map(e => e.visitedAt));
@@ -1139,25 +1180,36 @@ const syncTabs = async (options = {}) => {
         // ── Always include the local device's own bookmarks ─────────────────
         // The server omits them (neq device_id), so we re-read them from
         // Chrome's own tree and splice them in, replacing any stale entries.
-        const localBmTree = await chrome.bookmarks.getTree();
-        const localBmRoots = getBookmarks(localBmTree);
-        const latestSyncState = await chrome.storage.local.get(['remoteBookmarksRootId', 'remoteBookmarkFolderMap']);
-        const latestManagedFolderIds = getManagedFolderIdsFromState(latestSyncState);
-        markManagedNodesExcluded(localBmRoots, latestManagedFolderIds);
-        const localFlatBookmarks = flattenBookmarks(localBmRoots, 'This Device', os, persistentDeviceId);
-        allBookmarksCache = [
-            ...flatBookmarks.filter(b => b.deviceId !== persistentDeviceId),
-            ...localFlatBookmarks,
-        ];
+        if (HAS_BOOKMARKS_API) {
+            const localBmTree = await chrome.bookmarks.getTree();
+            const localBmRoots = getBookmarks(localBmTree);
+            const latestSyncState = await chrome.storage.local.get(['remoteBookmarksRootId', 'remoteBookmarkFolderMap']);
+            const latestManagedFolderIds = getManagedFolderIdsFromState(latestSyncState);
+            markManagedNodesExcluded(localBmRoots, latestManagedFolderIds);
+            const localFlatBookmarks = flattenBookmarks(localBmRoots, 'This Device', os, persistentDeviceId);
+            allBookmarksCache = [
+                ...flatBookmarks.filter(b => b.deviceId !== persistentDeviceId),
+                ...localFlatBookmarks,
+            ];
+        } else {
+            allBookmarksCache = flatBookmarks;
+        }
 
         // ── Persist watermarks + snapshots ─────────────────────────────────
-        await chrome.storage.local.set({
+        const storagePayload = {
             tabsCache:         allTabsCache,
             bookmarksCache:    allBookmarksCache,
             lastSyncedAt:      serverTime,
             tabsSnapshot:      currentTabsMap,
             bookmarksSnapshot: currentNodesMap,
-        });
+        };
+
+        // ── Persist subscription / tier info from sync response ─────────
+        if (data.subscription) {
+            storagePayload.subscription = data.subscription;
+        }
+
+        await chrome.storage.local.set(storagePayload);
 
         if (data.commands) handleCommands(data.commands);
 
@@ -1552,7 +1604,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
                         body: JSON.stringify({ command: { type: 'OPEN_TABS', payload: { urls: [url] } }, targetDeviceId }),
                     });
-                    sendResponse(res.ok ? { status: 'success' } : { status: 'error', message: 'API error' });
+                    if (res.ok) {
+                        sendResponse({ status: 'success' });
+                    } else {
+                        const errBody = await res.json().catch(() => ({}));
+                        sendResponse({ status: 'error', message: errBody.message || 'Upgrade to get more sends' });
+                    }
                 } catch(e) { sendResponse({ status: 'error', message: e.message }); }
             } else if (request.type === 'CLOSE_TAB') {
                 const { item } = request;
@@ -1577,7 +1634,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         if (res.ok) {
                             allTabsCache = allTabsCache.filter(t => t.id !== item.id);
                             sendResponse({ status: 'success' });
-                        } else { sendResponse({ status: 'error', message: 'Failed to send close command.' }); }
+                        } else {
+                            const errBody = await res.json().catch(() => ({}));
+                            sendResponse({ status: 'error', message: errBody.message || 'Upgrade to get more sends' });
+                        }
                     } catch(e) { sendResponse({ status: 'error', message: e.message }); }
                 }
             } else if (request.type === 'OPEN_TAB') {
@@ -1620,6 +1680,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     const expiresAt = Math.floor(Date.now() / 1000) + (session.expires_in || 3600);
                     const user = session.user || {};
                     const userEmail = user.email || request.email;
+
+                    // ── Account-switch guard: wipe ALL local data if signing into a different account ──
+                    const prev = await chrome.storage.sync.get('userId');
+                    if (prev.userId && prev.userId !== (user.id || null)) {
+                        console.log('[auth] Account switch detected – purging local data');
+                        await chrome.storage.local.remove([
+                            'lastSyncedAt', 'tabsSnapshot', 'bookmarksSnapshot', 'lastHistorySyncedAt',
+                            'tabsCache', 'bookmarksCache', 'subscription',
+                            'persistentDeviceId',
+                            'remoteBookmarksRootId', 'remoteBookmarkFolderMap', 'remoteBookmarkNodeMap',
+                            'remoteBookmarkApplyMuteUntil', 'historyQueue',
+                            'lastAuthStage', 'lastAuthAt', 'lastAuthError', 'lastAuthStatus',
+                            'lastAuthResponse', 'lastAuthExceptionName', 'lastAuthExceptionStack',
+                        ]);
+                        // Purge E2EE keys from IndexedDB
+                        try { await deleteKey('symmetricKey'); } catch (_) {}
+                        try { await deleteKey('grantedSymmetricKey'); } catch (_) {}
+                        try { await deleteKey('asymmetricPrivateKey'); } catch (_) {}
+                        try { await deleteKey('asymmetricPublicKey'); } catch (_) {}
+                        // Reset in-memory caches
+                        allTabsCache = [];
+                        allBookmarksCache = [];
+                        lastSyncedAt = null;
+                        tabsSnapshot = {};
+                        bookmarksSnapshot = {};
+                    }
+
                     await chrome.storage.sync.set({
                         accessToken: session.access_token,
                         refreshToken: session.refresh_token,
@@ -1627,6 +1714,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         userId: user.id || null,
                         userEmail,
                     });
+
+                    // Ensure persistentDeviceId exists (may have been purged by account-switch or sign-out)
+                    let { persistentDeviceId: currentDeviceId } = await chrome.storage.local.get('persistentDeviceId');
+                    if (!currentDeviceId) {
+                        currentDeviceId = generateUniqueId();
+                        await chrome.storage.local.set({ persistentDeviceId: currentDeviceId });
+                        console.log('[auth] Regenerated persistentDeviceId:', currentDeviceId);
+                    }
 
                     // Trigger first sync after sign-in, but do not block successful auth on sync errors.
                     let syncWarning = null;
@@ -1666,22 +1761,47 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     });
                 }
             } else if (request.type === 'SIGN_OUT') {
+                // Read token BEFORE clearing storage (needed for server sign-out)
                 const { accessToken } = await chrome.storage.sync.get('accessToken');
-                if (accessToken) await signOut(accessToken);
+
+                // ── 1. Cancel any pending / in-flight sync ──
+                clearTimeout(syncTimeout);
+                syncInFlightPromise = null;
+
+                // ── 2. Clear ALL stored credentials & session data FIRST ──
+                //    (Done before the network call so Safari's background page
+                //     suspension can't leave stale data behind.)
                 await chrome.storage.sync.remove([
                     'accessToken', 'refreshToken', 'tokenExpiresAt', 'userId', 'userEmail',
                 ]);
-                // Clear delta-sync state so the next sign-in starts with a full first sync
                 await chrome.storage.local.remove([
                     'lastSyncedAt', 'tabsSnapshot', 'bookmarksSnapshot', 'lastHistorySyncedAt',
-                    'tabsCache', 'bookmarksCache',
+                    'tabsCache', 'bookmarksCache', 'subscription',
+                    'persistentDeviceId',
+                    'remoteBookmarksRootId', 'remoteBookmarkFolderMap', 'remoteBookmarkNodeMap',
+                    'remoteBookmarkApplyMuteUntil', 'historyQueue',
+                    'lastAuthStage', 'lastAuthAt', 'lastAuthError', 'lastAuthStatus',
+                    'lastAuthResponse', 'lastAuthExceptionName', 'lastAuthExceptionStack',
                 ]);
+
+                // ── 3. Purge E2EE keys from IndexedDB ──
+                try { await deleteKey('symmetricKey'); } catch (_) {}
+                try { await deleteKey('grantedSymmetricKey'); } catch (_) {}
+                try { await deleteKey('asymmetricPrivateKey'); } catch (_) {}
+                try { await deleteKey('asymmetricPublicKey'); } catch (_) {}
+
+                // ── 4. Reset in-memory caches ──
                 allTabsCache = [];
                 allBookmarksCache = [];
                 lastSyncedAt = null;
                 tabsSnapshot = {};
                 bookmarksSnapshot = {};
+
+                // ── 5. Respond immediately so the popup can update the UI ──
                 sendResponse({ status: 'success' });
+
+                // ── 6. Fire-and-forget server-side session revocation ──
+                if (accessToken) signOut(accessToken).catch(() => {});
             } else if (request.type === 'CLEAR_TABS_CACHE') {
                 await chrome.storage.local.remove(['tabsCache', 'tabsSnapshot', 'lastSyncedAt']);
                 allTabsCache = [];
@@ -1694,6 +1814,57 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 bookmarksSnapshot = {};
                 lastSyncedAt = null;
                 sendResponse({ status: 'success' });
+            } else if (request.type === 'CLEAR_ALL_DATA') {
+                // ── Factory reset: wipe EVERYTHING ──
+                clearTimeout(syncTimeout);
+                syncInFlightPromise = null;
+
+                // Wipe all sync storage (auth tokens, userId, apiUrl, deviceName, os, etc.)
+                await chrome.storage.sync.clear();
+                // Wipe all local storage
+                await chrome.storage.local.clear();
+
+                // Purge E2EE keys from IndexedDB
+                try { await deleteKey('symmetricKey'); } catch (_) {}
+                try { await deleteKey('grantedSymmetricKey'); } catch (_) {}
+                try { await deleteKey('asymmetricPrivateKey'); } catch (_) {}
+                try { await deleteKey('asymmetricPublicKey'); } catch (_) {}
+
+                // Reset all in-memory caches
+                allTabsCache = [];
+                allBookmarksCache = [];
+                lastSyncedAt = null;
+                tabsSnapshot = {};
+                bookmarksSnapshot = {};
+
+                console.log('[reset] All data cleared (factory reset).');
+                sendResponse({ status: 'success' });
+            } else if (request.type === 'GET_SUBSCRIPTION') {
+                const { subscription } = await chrome.storage.local.get('subscription');
+                sendResponse(subscription || { tier: 'free', status: 'active', limits: {} });
+            } else if (request.type === 'FETCH_SUBSCRIPTION') {
+                // Force-fetch subscription from backend
+                try {
+                    const { apiUrl } = await chrome.storage.sync.get(['apiUrl']);
+                    const token = await getValidAccessToken();
+                    if (apiUrl && token) {
+                        const subRes = await fetch(new URL('/api/subscription', apiUrl).href, {
+                            headers: { 'Authorization': `Bearer ${token}` },
+                        });
+                        if (subRes.ok) {
+                            const subData = await subRes.json();
+                            await chrome.storage.local.set({ subscription: subData });
+                            sendResponse(subData);
+                        } else {
+                            sendResponse({ tier: 'free', status: 'active', limits: {} });
+                        }
+                    } else {
+                        sendResponse({ tier: 'free', status: 'active', limits: {} });
+                    }
+                } catch (e) {
+                    console.error('Failed to fetch subscription:', e);
+                    sendResponse({ tier: 'free', status: 'active', limits: {} });
+                }
             } else if (request.type === 'STORE_KEY') {
                 await saveKey(request.key);
                 let forceRefresh = { status: 'success' };

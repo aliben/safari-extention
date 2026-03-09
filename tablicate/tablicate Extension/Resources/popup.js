@@ -69,7 +69,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const clearTabsCacheBtn      = document.getElementById('clearTabsCacheBtn');
     const clearBookmarksCacheBtn = document.getElementById('clearBookmarksCacheBtn');
     const clearCacheStatusEl     = document.getElementById('clear-cache-status');
-
+    const clearAllDataBtn        = document.getElementById('clearAllDataBtn');
+    const clearAllStatusEl       = document.getElementById('clear-all-status');
+    const lastSyncedAtEl           = document.getElementById('lastSyncedAt');
+    const planBadge           = document.getElementById('planBadge');
+    const planBanner          = document.getElementById('plan-banner');
+    const planBannerText      = document.getElementById('planBannerText');
+    const managePlanBtn       = document.getElementById('managePlanBtn');
     // ── Helpers ────────────────────────────────────────────────────────────
     const sendMsg = (msg, cb) => chrome.runtime.sendMessage(msg, cb);
     const isBrowserInternalUrl = (url = '') =>
@@ -100,6 +106,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const orig = el.textContent;
             el.textContent = '\u2713 Copied!';
             setTimeout(() => { el.textContent = orig; }, 2000);
+        });
+    };
+
+    const formatRelativeTime = (iso) => {
+        if (!iso) return '';
+        const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+        if (diff < 60)    return 'Just now';
+        if (diff < 3600)   return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400)  return `${Math.floor(diff / 3600)}h ago`;
+        if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+        return new Date(iso).toLocaleDateString();
+    };
+
+    const updateLastSyncedDisplay = () => {
+        if (!lastSyncedAtEl) return;
+        chrome.storage.local.get(['lastSyncedAt'], (r) => {
+            lastSyncedAtEl.textContent = r.lastSyncedAt ? `Last synced: ${formatRelativeTime(r.lastSyncedAt)}` : '';
         });
     };
 
@@ -141,7 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
         sendMsg({ type: 'SYNC_TABS' }, (r) => {
             if (chrome.runtime.lastError) { statusEl.textContent = 'Sync failed.'; return; }
             statusEl.textContent = r?.status === 'success' ? 'Synced!' : `Failed: ${r?.message || ''}`;
-            if (r?.status === 'success') listCurrentTabs();
+            if (r?.status === 'success') { listCurrentTabs(); updateLastSyncedDisplay(); }
             setTimeout(() => { statusEl.textContent = ''; }, 3000);
         });
     };
@@ -203,12 +226,40 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
+    const updatePlanUI = (sub) => {
+        const tier = (sub && sub.tier) ? sub.tier : 'free';
+        const labels = { free: 'Free', plus: 'Plus', pro: 'Pro' };
+        if (planBadge) {
+            planBadge.textContent = labels[tier] || 'Free';
+            planBadge.className = 'plan-badge ' + tier;
+        }
+        if (planBanner) {
+            if (tier === 'free') {
+                planBanner.style.display = '';
+                if (planBannerText) planBannerText.textContent = 'Upgrade to unlock bookmarks, history search & encryption';
+            } else if (tier === 'plus') {
+                planBanner.style.display = '';
+                if (planBannerText) planBannerText.textContent = 'Upgrade to Pro for unlimited everything';
+            } else {
+                planBanner.style.display = 'none';
+            }
+        }
+    };
+
+    const fetchAndDisplayPlan = () => {
+        sendMsg({ type: 'GET_SUBSCRIPTION' }, (sub) => {
+            updatePlanUI(sub);
+        });
+    };
+
     const enterMain = () => {
         showView(viewMain);
         switchTab('tabs-panel');
         listCurrentTabs();
         loadShortcuts();
         renderE2eeSettingsBlock();
+        updateLastSyncedDisplay();
+        fetchAndDisplayPlan();
     };
 
     // ── Init ───────────────────────────────────────────────────────────────
@@ -216,6 +267,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (r.apiUrl) {
             apiUrlInput.value = r.apiUrl;
             setBackendLink(r.apiUrl);
+            // Wire Manage Plan button to open dashboard settings
+            if (managePlanBtn) {
+                managePlanBtn.addEventListener('click', () => {
+                    chrome.tabs.create({ url: r.apiUrl + '/settings' });
+                });
+            }
             if (r.accessToken && r.userEmail) {
                 loggedInUserEl.textContent = r.userEmail;
                 deviceNameInput.value = r.deviceName || `Safari (${r.os || 'Unknown'})`;
@@ -419,6 +476,21 @@ document.addEventListener('DOMContentLoaded', () => {
         sendMsg({ type: 'CLEAR_BOOKMARKS_CACHE' }, (res) => {
             clearCacheStatusEl.textContent = res?.status === 'success' ? '\u2713 Bookmarks cache cleared.' : 'Failed.';
             setTimeout(() => { clearCacheStatusEl.textContent = ''; }, 2500);
+        });
+    });
+
+    clearAllDataBtn?.addEventListener('click', () => {
+        if (!confirm('This will erase ALL local data (auth, tabs, bookmarks, encryption keys, settings) and sign you out. Continue?')) return;
+        clearAllStatusEl.textContent = 'Clearing\u2026';
+        sendMsg({ type: 'CLEAR_ALL_DATA' }, (res) => {
+            if (res?.status === 'success') {
+                clearAllStatusEl.textContent = '';
+                emailInput.value = ''; passwordInput.value = '';
+                showView(viewAuth);
+            } else {
+                clearAllStatusEl.textContent = 'Failed to clear data.';
+                setTimeout(() => { clearAllStatusEl.textContent = ''; }, 2500);
+            }
         });
     });
 });

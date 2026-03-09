@@ -139,8 +139,15 @@
     <!-- Dashboard -->
     <div id="view-main" class="view">
       <div class="user-info">
-        <span>Signed in as <strong id="loggedInUser"></strong></span>
+        <div class="user-info-left">
+          <span>Signed in as <strong id="loggedInUser"></strong></span>
+          <span id="planBadge" class="plan-badge free">Free</span>
+        </div>
         <button id="logoutButton" class="logout-button">Logout</button>
+      </div>
+      <div id="plan-banner" class="plan-banner" style="display:none">
+        <div class="plan-banner-text"><span id="planBannerText">Upgrade to unlock more features</span></div>
+        <button id="managePlanBtn" class="plan-banner-btn">Manage Plan ↗</button>
       </div>
 
       <div class="tabs-container">
@@ -213,6 +220,15 @@
             <button id="clearBookmarksCacheBtn" class="danger">Reset Bookmarks</button>
           </div>
           <p id="clear-cache-status" class="status-text"></p>
+
+          <hr class="separator">
+
+          <div class="setting-header">
+            <h2>Factory Reset</h2>
+          </div>
+          <p class="status-text" style="text-align:left;margin-top:0;">Wipes all local data including auth tokens, cached tabs, encryption keys, and settings. You will be signed out.</p>
+          <button id="clearAllDataBtn" class="danger full-width">Clear All Data &amp; Sign Out</button>
+          <p id="clear-all-status" class="status-text"></p>
         </div>
       </div>
     </div>

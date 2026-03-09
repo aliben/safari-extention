@@ -23,6 +23,62 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentSearchScope = 'tabs'; // 'tabs', 'bookmarks', 'favorites', 'history', 'recentlyClosed'
     let sendPanelVisible = false;
     let sendPanelActiveItem = null;
+    let cachedSubscription = null;
+
+    // ── Subscription / Tier helpers ────────────────────────────────────
+    function fetchSubscription(cb) {
+        chrome.runtime.sendMessage({ type: 'GET_SUBSCRIPTION' }, (sub) => {
+            cachedSubscription = sub || { tier: 'free', status: 'active', limits: {} };
+            if (cb) cb(cachedSubscription);
+        });
+    }
+
+    function isScopeGated(scope) {
+        if (!cachedSubscription) return false;
+        const tier = cachedSubscription.tier || 'free';
+        const limits = cachedSubscription.limits || {};
+        if (scope === 'bookmarks'  && !limits.bookmarkSync)  return true;
+        if (scope === 'history'    && !limits.historySearch)  return true;
+        return false;
+    }
+
+    function showUpgradeOverlay(scope) {
+        // Remove any existing overlay
+        hideUpgradeOverlay();
+        const featureLabels = { bookmarks: 'Bookmark Sync', history: 'History Search', favorites: 'Favorites' };
+        const overlay = document.createElement('div');
+        overlay.id = 'upgrade-overlay';
+        overlay.innerHTML = `
+            <div class="upgrade-overlay-card">
+                <div class="upgrade-overlay-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                </div>
+                <div class="upgrade-overlay-title">${featureLabels[scope] || scope} requires an upgrade</div>
+                <div class="upgrade-overlay-desc">This feature is available on the Plus or Pro plan. Upgrade from your Tablicate dashboard to unlock it.</div>
+                <button class="upgrade-overlay-btn" id="upgrade-overlay-action">Upgrade Plan ↗</button>
+                <button class="upgrade-overlay-dismiss" id="upgrade-overlay-dismiss">Back to Tabs</button>
+            </div>`;
+        const resultsContainer = document.getElementById('results-container');
+        resultsContainer.appendChild(overlay);
+
+        document.getElementById('upgrade-overlay-action').addEventListener('click', () => {
+            chrome.storage.sync.get(['apiUrl'], (r) => {
+                if (r.apiUrl) {
+                    chrome.runtime.sendMessage({ type: 'OPEN_TAB', item: { url: r.apiUrl + '/settings' } });
+                    closeSpotlight();
+                }
+            });
+        });
+        document.getElementById('upgrade-overlay-dismiss').addEventListener('click', () => {
+            hideUpgradeOverlay();
+            setSearchScope('tabs');
+        });
+    }
+
+    function hideUpgradeOverlay() {
+        const existing = document.getElementById('upgrade-overlay');
+        if (existing) existing.remove();
+    }
 
     function closeSpotlight() {
         window.parent.postMessage({ type: 'CLOSE_SPOTLIGHT' }, '*');
@@ -153,6 +209,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setSearchScope(scope) {
         if (currentSearchScope === scope) return;
+
+        // Tier gate: block access to gated scopes for free users
+        if (isScopeGated(scope)) {
+            // Still update the UI to show user tried to switch
+            currentSearchScope = scope;
+            searchInput.value = '';
+            tabsModeButton.classList.toggle('active', scope === 'tabs');
+            bookmarksModeButton.classList.toggle('active', scope === 'bookmarks');
+            if (historyModeButton) historyModeButton.classList.toggle('active', scope === 'history');
+            updateSearchPill();
+            resultsList.innerHTML = '';
+            showUpgradeOverlay(scope);
+            return;
+        }
+
+        hideUpgradeOverlay();
         currentSearchScope = scope;
         searchInput.value = '';
         hideSendPanel();
@@ -208,15 +280,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function doSendTab(targetDeviceId, deviceName) {
         if (!sendPanelActiveItem) return;
-        chrome.runtime.sendMessage({ type: 'SEND_TAB', url: sendPanelActiveItem.url, targetDeviceId }, () => {
+        chrome.runtime.sendMessage({ type: 'SEND_TAB', url: sendPanelActiveItem.url, targetDeviceId }, (response) => {
             hideSendPanel();
             const liItems = resultsList.getElementsByClassName('result-item');
             if (selectedIndex > -1 && liItems[selectedIndex]) {
                 const feedback = document.createElement('div');
-                feedback.className = 'copied-feedback';
-                feedback.textContent = `Sent to ${deviceName}!`;
-                liItems[selectedIndex].appendChild(feedback);
-                setTimeout(() => feedback.remove(), 1500);
+                if (response && response.status === 'error') {
+                    feedback.className = 'copied-feedback error-feedback';
+                    feedback.textContent = response.message || 'Upgrade to get more sends';
+                    liItems[selectedIndex].appendChild(feedback);
+                    setTimeout(() => feedback.remove(), 3000);
+                } else {
+                    feedback.className = 'copied-feedback';
+                    feedback.textContent = `Sent to ${deviceName}!`;
+                    liItems[selectedIndex].appendChild(feedback);
+                    setTimeout(() => feedback.remove(), 1500);
+                }
             }
         });
     }
@@ -349,8 +428,19 @@ document.addEventListener('DOMContentLoaded', () => {
                         e.stopPropagation();
                         chrome.runtime.sendMessage({ type: 'CLOSE_TAB', item }, (resp) => {
                             if (resp?.status === 'success') {
+                                const feedback = document.createElement('div');
+                                feedback.className = 'copied-feedback';
+                                feedback.textContent = 'Close command sent!';
+                                const li = resultsList.getElementsByClassName('result-item')[index];
+                                if (li) { li.appendChild(feedback); setTimeout(() => feedback.remove(), 1500); }
                                 const idx = currentResults.indexOf(item);
-                                if (idx > -1) { currentResults.splice(idx, 1); renderResults(currentResults); }
+                                if (idx > -1) { currentResults.splice(idx, 1); setTimeout(() => renderResults(currentResults), 800); }
+                            } else {
+                                const feedback = document.createElement('div');
+                                feedback.className = 'copied-feedback error-feedback';
+                                feedback.textContent = resp?.message || 'Upgrade to get more sends';
+                                const li = resultsList.getElementsByClassName('result-item')[index];
+                                if (li) { li.appendChild(feedback); setTimeout(() => feedback.remove(), 3000); }
                             }
                         });
                     });
@@ -457,11 +547,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (liItems[selectedIndex]) liItems[selectedIndex].style.opacity = '0.4';
                 chrome.runtime.sendMessage({ type: 'CLOSE_TAB', item }, (resp) => {
                     if (resp?.status === 'success') {
+                        const feedback = document.createElement('div');
+                        feedback.className = 'copied-feedback';
+                        feedback.textContent = 'Close command sent!';
+                        const liEl = resultsList.getElementsByClassName('result-item')[selectedIndex];
+                        if (liEl) { liEl.appendChild(feedback); setTimeout(() => feedback.remove(), 1500); }
                         currentResults.splice(selectedIndex, 1);
-                        renderResults(currentResults);
+                        setTimeout(() => renderResults(currentResults), 800);
                     } else {
                         const li2 = resultsList.getElementsByClassName('result-item')[selectedIndex];
-                        if (li2) li2.style.opacity = '';
+                        if (li2) {
+                            li2.style.opacity = '';
+                            const feedback = document.createElement('div');
+                            feedback.className = 'copied-feedback error-feedback';
+                            feedback.textContent = resp?.message || 'Upgrade to get more sends';
+                            li2.appendChild(feedback);
+                            setTimeout(() => feedback.remove(), 3000);
+                        }
                     }
                 });
             }
@@ -561,7 +663,11 @@ document.addEventListener('DOMContentLoaded', () => {
                                  titleDiv.prepend(star);
                             }
                         } else {
-                            console.error("Failed to add favorite:", response.message);
+                            const feedback = document.createElement('div');
+                            feedback.className = 'copied-feedback error-feedback';
+                            feedback.textContent = response.message || 'Failed to add favorite';
+                            items[selectedIndex].appendChild(feedback);
+                            setTimeout(() => feedback.remove(), 3000);
                         }
                     });
                 }
@@ -598,6 +704,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    fetchSubscription(); // load tier data on spotlight open
     fetchDevices();
     performSearch();
     searchInput.focus();
