@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Subscription / Tier helpers ────────────────────────────────────
     function fetchSubscription(cb) {
-        chrome.runtime.sendMessage({ type: 'GET_SUBSCRIPTION' }, (sub) => {
+        chrome.runtime.sendMessage({ type: 'FETCH_SUBSCRIPTION' }, (sub) => {
             cachedSubscription = sub || { tier: 'free', status: 'active', limits: {} };
             if (cb) cb(cachedSubscription);
         });

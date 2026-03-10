@@ -247,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const fetchAndDisplayPlan = () => {
-        sendMsg({ type: 'GET_SUBSCRIPTION' }, (sub) => {
+        sendMsg({ type: 'FETCH_SUBSCRIPTION' }, (sub) => {
             updatePlanUI(sub);
         });
     };
