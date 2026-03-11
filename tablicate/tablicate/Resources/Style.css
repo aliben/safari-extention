@@ -43,3 +43,29 @@ body.state-off :is(.state-on, .state-unknown) {
 button {
     font-size: 1em;
 }
+
+button.clear-storage,
+button.clear-storage-confirm {
+    color: #ff3b30;
+}
+
+button.clear-storage-confirm {
+    font-weight: 600;
+}
+
+.clear-storage-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.clear-status {
+    font-size: 0.82em;
+    min-height: 1.2em;
+    margin: 0;
+}
+
+.clear-status.warn    { color: #ff9500; }
+.clear-status.success { color: #34c759; }
+.clear-status.error   { color: #ff3b30; }

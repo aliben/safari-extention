@@ -208,10 +208,38 @@ async function deleteKey(id) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(KEY_STORE_NAME, 'readwrite');
-        const store = transaction.objectStore(KEY_STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(KEY_STORE_NAME);
         const request = store.delete(id);
         request.onsuccess = () => resolve();
         request.onerror = () => reject(request.error);
+    });
+}
+
+// Drops the entire IndexedDB database — more reliable than deleting records one-by-one,
+// especially in Safari where background-page suspension can leave stale DB connections.
+function clearAllKeys() {
+    return new Promise((resolve) => {
+        const req = indexedDB.deleteDatabase(DB_NAME);
+        req.onsuccess = () => resolve();
+        req.onerror = () => {
+            console.warn('[clearAllKeys] deleteDatabase error, falling back to record-by-record delete:', req.error);
+            // Best-effort fallback
+            Promise.allSettled([
+                deleteKey('symmetricKey'),
+                deleteKey('grantedSymmetricKey'),
+                deleteKey('asymmetricPrivateKey'),
+                deleteKey('asymmetricPublicKey'),
+            ]).then(resolve);
+        };
+        req.onblocked = () => {
+            console.warn('[clearAllKeys] deleteDatabase blocked — forcing record-by-record delete.');
+            Promise.allSettled([
+                deleteKey('symmetricKey'),
+                deleteKey('grantedSymmetricKey'),
+                deleteKey('asymmetricPrivateKey'),
+                deleteKey('asymmetricPublicKey'),
+            ]).then(resolve);
+        };
     });
 }
 
@@ -1463,7 +1491,32 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 let searchSource = [];
                 
                 if (mode === 'tabs') {
-                    searchSource = allTabsCache;
+                    // Always query fresh local tabs — Safari suspends the background page
+                    // aggressively, so allTabsCache may be stale or empty on wake-up.
+                    const { persistentDeviceId } = await chrome.storage.local.get('persistentDeviceId');
+                    const { os } = await chrome.storage.sync.get('os');
+                    let freshLocalTabs = [];
+                    try {
+                        const browserTabs = await chrome.tabs.query({});
+                        freshLocalTabs = browserTabs
+                            .filter(t => t.url && !isBrowserInternalUrl(t.url))
+                            .map(t => ({
+                                id:         `${t.windowId}-${t.id}`,
+                                title:      t.title,
+                                url:        t.url,
+                                faviconUrl: t.favIconUrl,
+                                windowId:   t.windowId,
+                                timestamp:  Date.now(),
+                                deviceName: 'This Device',
+                                deviceId:   persistentDeviceId || 'local',
+                                os:         os || 'mac',
+                            }));
+                    } catch (e) {
+                        console.warn('[SEARCH] chrome.tabs.query failed, falling back to cache', e);
+                    }
+                    // Remote tabs from allTabsCache (exclude current device to avoid duplicates)
+                    const remoteTabs = allTabsCache.filter(t => t.deviceId && t.deviceId !== persistentDeviceId);
+                    searchSource = [...freshLocalTabs, ...remoteTabs];
                 } else if (mode === 'bookmarks') {
                     searchSource = allBookmarksCache;
                 } else if (mode === 'favorites') {
@@ -1784,6 +1837,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     'lastAuthResponse', 'lastAuthExceptionName', 'lastAuthExceptionStack',
                 ]);
 
+                // ── Call Native Bridge to clear Safari extension storage ──
+                if (self.TablicateNativeBridge) {
+                    try {
+                        await self.TablicateNativeBridge.send('CLEAR_ALL_DATA');
+                    } catch (err) {
+                        console.error('Native clear data failed', err);
+                    }
+                }
+
                 // ── 3. Purge E2EE keys from IndexedDB ──
                 try { await deleteKey('symmetricKey'); } catch (_) {}
                 try { await deleteKey('grantedSymmetricKey'); } catch (_) {}
@@ -1816,19 +1878,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 sendResponse({ status: 'success' });
             } else if (request.type === 'CLEAR_ALL_DATA') {
                 // ── Factory reset: wipe EVERYTHING ──
+                const { accessToken } = await chrome.storage.sync.get('accessToken');
                 clearTimeout(syncTimeout);
                 syncInFlightPromise = null;
 
-                // Wipe all sync storage (auth tokens, userId, apiUrl, deviceName, os, etc.)
-                await chrome.storage.sync.clear();
-                // Wipe all local storage
-                await chrome.storage.local.clear();
+                const syncKeysToRemove = [
+                    'accessToken', 'refreshToken', 'tokenExpiresAt', 'userId', 'userEmail',
+                    'apiUrl', 'deviceName', 'os',
+                ];
+                const localKeysToRemove = [
+                    'lastSyncedAt', 'tabsSnapshot', 'bookmarksSnapshot', 'lastHistorySyncedAt',
+                    'tabsCache', 'bookmarksCache', 'subscription',
+                    'persistentDeviceId',
+                    'remoteBookmarksRootId', 'remoteBookmarkFolderMap', 'remoteBookmarkNodeMap',
+                    'remoteBookmarkApplyMuteUntil', 'historyQueue',
+                    'lastAuthStage', 'lastAuthAt', 'lastAuthError', 'lastAuthStatus',
+                    'lastAuthResponse', 'lastAuthExceptionName', 'lastAuthExceptionStack',
+                ];
 
-                // Purge E2EE keys from IndexedDB
-                try { await deleteKey('symmetricKey'); } catch (_) {}
-                try { await deleteKey('grantedSymmetricKey'); } catch (_) {}
-                try { await deleteKey('asymmetricPrivateKey'); } catch (_) {}
-                try { await deleteKey('asymmetricPublicKey'); } catch (_) {}
+                const resetResults = await Promise.allSettled([
+                    chrome.storage.sync.clear().catch(() => chrome.storage.sync.remove(syncKeysToRemove)),
+                    chrome.storage.local.clear().catch(() => chrome.storage.local.remove(localKeysToRemove)),
+                    clearAllKeys(),
+                ]);
+                
+                if (self.TablicateNativeBridge) {
+                    try {
+                        await self.TablicateNativeBridge.send('CLEAR_ALL_DATA');
+                    } catch (err) {
+                        console.error('Native clear data failed', err);
+                    }
+                }
+
+                const resetFailed = resetResults.some(r => r.status === 'rejected');
 
                 // Reset all in-memory caches
                 allTabsCache = [];
@@ -1837,8 +1919,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 tabsSnapshot = {};
                 bookmarksSnapshot = {};
 
-                console.log('[reset] All data cleared (factory reset).');
-                sendResponse({ status: 'success' });
+                // Best-effort server-side revoke after local wipe.
+                if (accessToken) signOut(accessToken).catch(() => {});
+
+                if (resetFailed) {
+                    console.error('[reset] Partial reset failure during CLEAR_ALL_DATA.');
+                    sendResponse({ status: 'error', message: 'Failed to fully clear all data.' });
+                } else {
+                    console.log('[reset] All data cleared (factory reset).');
+                    sendResponse({ status: 'success' });
+                }
             } else if (request.type === 'GET_SUBSCRIPTION') {
                 const { subscription } = await chrome.storage.local.get('subscription');
                 sendResponse(subscription || { tier: 'free', status: 'active', limits: {} });

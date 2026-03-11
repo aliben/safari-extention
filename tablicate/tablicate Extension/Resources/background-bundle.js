@@ -197,7 +197,8 @@ async function refreshSession(refreshToken) {
 }
 
 async function signOut(accessToken) {
-    await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+    // Use scope=local so we only revoke THIS session, not all user sessions
+    await fetch(`${SUPABASE_URL}/auth/v1/logout?scope=local`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -283,10 +284,38 @@ async function deleteKey(id) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(KEY_STORE_NAME, 'readwrite');
-        const store = transaction.objectStore(KEY_STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(KEY_STORE_NAME);
         const request = store.delete(id);
         request.onsuccess = () => resolve();
         request.onerror = () => reject(request.error);
+    });
+}
+
+// Drops the entire IndexedDB database — more reliable than deleting records one-by-one,
+// especially in Safari where background-page suspension can leave stale DB connections.
+function clearAllKeys() {
+    return new Promise((resolve) => {
+        const req = indexedDB.deleteDatabase(DB_NAME);
+        req.onsuccess = () => resolve();
+        req.onerror = () => {
+            console.warn('[clearAllKeys] deleteDatabase error, falling back to record-by-record delete:', req.error);
+            // Best-effort fallback
+            Promise.allSettled([
+                deleteKey('symmetricKey'),
+                deleteKey('grantedSymmetricKey'),
+                deleteKey('asymmetricPrivateKey'),
+                deleteKey('asymmetricPublicKey'),
+            ]).then(resolve);
+        };
+        req.onblocked = () => {
+            console.warn('[clearAllKeys] deleteDatabase blocked — forcing record-by-record delete.');
+            Promise.allSettled([
+                deleteKey('symmetricKey'),
+                deleteKey('grantedSymmetricKey'),
+                deleteKey('asymmetricPrivateKey'),
+                deleteKey('asymmetricPublicKey'),
+            ]).then(resolve);
+        };
     });
 }
 
@@ -1074,6 +1103,12 @@ const syncTabs = async (options = {}) => {
             }
             return { status: 'failure', message: 'Unauthorized. Please sign in again.' };
         }
+        if (response.status === 403) {
+            const errData = await response.json().catch(() => ({}));
+            const msg = errData.message || 'Access denied. Check your subscription plan.';
+            console.warn('[sync] 403 Forbidden:', msg);
+            return { status: 'failure', message: msg, upgrade: errData.upgrade ?? false };
+        }
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         console.log('Sync response:', data);
@@ -1083,10 +1118,25 @@ const syncTabs = async (options = {}) => {
         const newHistEntries = historyQueue.filter(e => e.visitedAt > storedLastHistSync);
         if (newHistEntries.length > 0) {
             try {
+                // Encrypt history entries if a symmetric key is available
+                const entriesToSend = newHistEntries.map(e => {
+                    if (effectiveSymmetricKey) {
+                        const plainPayload = { title: e.title, url: e.url, faviconUrl: e.faviconUrl };
+                        const payload = encryptSymmetric(plainPayload, effectiveSymmetricKey);
+                        return {
+                            ...e,
+                            title: '',
+                            faviconUrl: null,
+                            isEncrypted: true,
+                            payload,
+                        };
+                    }
+                    return e;
+                });
                 const histFlush = await fetch(new URL('/api/history', apiUrl).href, {
                     method: 'POST',
                     headers: authHeaders,
-                    body: JSON.stringify({ entries: newHistEntries }),
+                    body: JSON.stringify({ entries: entriesToSend }),
                 });
                 if (histFlush.ok) {
                     const maxFlushed = Math.max(...newHistEntries.map(e => e.visitedAt));
@@ -1250,13 +1300,20 @@ const syncTabs = async (options = {}) => {
         }
 
         // ── Persist watermarks + snapshots ─────────────────────────────────
-        await chrome.storage.local.set({
+        const storagePayload = {
             tabsCache:         allTabsCache,
             bookmarksCache:    allBookmarksCache,
             lastSyncedAt:      serverTime,
             tabsSnapshot:      currentTabsMap,
             bookmarksSnapshot: currentNodesMap,
-        });
+        };
+
+        // ── Persist subscription / tier info from sync response ─────────
+        if (data.subscription) {
+            storagePayload.subscription = data.subscription;
+        }
+
+        await chrome.storage.local.set(storagePayload);
 
         if (data.commands) handleCommands(data.commands);
 
@@ -1510,7 +1567,32 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 let searchSource = [];
                 
                 if (mode === 'tabs') {
-                    searchSource = allTabsCache;
+                    // Always query fresh local tabs — Safari suspends the background page
+                    // aggressively, so allTabsCache may be stale or empty on wake-up.
+                    const { persistentDeviceId } = await chrome.storage.local.get('persistentDeviceId');
+                    const { os } = await chrome.storage.sync.get('os');
+                    let freshLocalTabs = [];
+                    try {
+                        const browserTabs = await chrome.tabs.query({});
+                        freshLocalTabs = browserTabs
+                            .filter(t => t.url && !isBrowserInternalUrl(t.url))
+                            .map(t => ({
+                                id:         `${t.windowId}-${t.id}`,
+                                title:      t.title,
+                                url:        t.url,
+                                faviconUrl: t.favIconUrl,
+                                windowId:   t.windowId,
+                                timestamp:  Date.now(),
+                                deviceName: 'This Device',
+                                deviceId:   persistentDeviceId || 'local',
+                                os:         os || 'mac',
+                            }));
+                    } catch (e) {
+                        console.warn('[SEARCH] chrome.tabs.query failed, falling back to cache', e);
+                    }
+                    // Remote tabs from allTabsCache (exclude current device to avoid duplicates)
+                    const remoteTabs = allTabsCache.filter(t => t.deviceId && t.deviceId !== persistentDeviceId);
+                    searchSource = [...freshLocalTabs, ...remoteTabs];
                 } else if (mode === 'bookmarks') {
                     searchSource = allBookmarksCache;
                 } else if (mode === 'favorites') {
@@ -1651,7 +1733,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
                         body: JSON.stringify({ command: { type: 'OPEN_TABS', payload: { urls: [url] } }, targetDeviceId }),
                     });
-                    sendResponse(res.ok ? { status: 'success' } : { status: 'error', message: 'API error' });
+                    if (res.ok) {
+                        sendResponse({ status: 'success' });
+                    } else {
+                        const errBody = await res.json().catch(() => ({}));
+                        sendResponse({ status: 'error', message: errBody.message || 'Upgrade to get more sends' });
+                    }
                 } catch(e) { sendResponse({ status: 'error', message: e.message }); }
             } else if (request.type === 'CLOSE_TAB') {
                 const { item } = request;
@@ -1676,7 +1763,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         if (res.ok) {
                             allTabsCache = allTabsCache.filter(t => t.id !== item.id);
                             sendResponse({ status: 'success' });
-                        } else { sendResponse({ status: 'error', message: 'Failed to send close command.' }); }
+                        } else {
+                            const errBody = await res.json().catch(() => ({}));
+                            sendResponse({ status: 'error', message: errBody.message || 'Upgrade to get more sends' });
+                        }
                     } catch(e) { sendResponse({ status: 'error', message: e.message }); }
                 }
             } else if (request.type === 'OPEN_TAB') {
@@ -1719,6 +1809,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     const expiresAt = Math.floor(Date.now() / 1000) + (session.expires_in || 3600);
                     const user = session.user || {};
                     const userEmail = user.email || request.email;
+
+                    // ── Account-switch guard: wipe ALL local data if signing into a different account ──
+                    const prev = await chrome.storage.sync.get('userId');
+                    if (prev.userId && prev.userId !== (user.id || null)) {
+                        console.log('[auth] Account switch detected – purging local data');
+                        await chrome.storage.local.remove([
+                            'lastSyncedAt', 'tabsSnapshot', 'bookmarksSnapshot', 'lastHistorySyncedAt',
+                            'tabsCache', 'bookmarksCache', 'subscription',
+                            'persistentDeviceId',
+                            'remoteBookmarksRootId', 'remoteBookmarkFolderMap', 'remoteBookmarkNodeMap',
+                            'remoteBookmarkApplyMuteUntil', 'historyQueue',
+                            'lastAuthStage', 'lastAuthAt', 'lastAuthError', 'lastAuthStatus',
+                            'lastAuthResponse', 'lastAuthExceptionName', 'lastAuthExceptionStack',
+                        ]);
+                        // Purge E2EE keys from IndexedDB
+                        try { await deleteKey('symmetricKey'); } catch (_) {}
+                        try { await deleteKey('grantedSymmetricKey'); } catch (_) {}
+                        try { await deleteKey('asymmetricPrivateKey'); } catch (_) {}
+                        try { await deleteKey('asymmetricPublicKey'); } catch (_) {}
+                        // Reset in-memory caches
+                        allTabsCache = [];
+                        allBookmarksCache = [];
+                        lastSyncedAt = null;
+                        tabsSnapshot = {};
+                        bookmarksSnapshot = {};
+                    }
+
                     await chrome.storage.sync.set({
                         accessToken: session.access_token,
                         refreshToken: session.refresh_token,
@@ -1726,6 +1843,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         userId: user.id || null,
                         userEmail,
                     });
+
+                    // Ensure persistentDeviceId exists (may have been purged by account-switch or sign-out)
+                    let { persistentDeviceId: currentDeviceId } = await chrome.storage.local.get('persistentDeviceId');
+                    if (!currentDeviceId) {
+                        currentDeviceId = generateUniqueId();
+                        await chrome.storage.local.set({ persistentDeviceId: currentDeviceId });
+                        console.log('[auth] Regenerated persistentDeviceId:', currentDeviceId);
+                    }
 
                     // Trigger first sync after sign-in, but do not block successful auth on sync errors.
                     let syncWarning = null;
@@ -1765,22 +1890,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     });
                 }
             } else if (request.type === 'SIGN_OUT') {
+                // Read token BEFORE clearing storage (needed for server sign-out)
                 const { accessToken } = await chrome.storage.sync.get('accessToken');
-                if (accessToken) await signOut(accessToken);
+
+                // ── 1. Cancel any pending / in-flight sync ──
+                clearTimeout(syncTimeout);
+                syncInFlightPromise = null;
+
+                // ── 2. Clear ALL stored credentials & session data FIRST ──
+                //    (Done before the network call so Safari's background page
+                //     suspension can't leave stale data behind.)
                 await chrome.storage.sync.remove([
                     'accessToken', 'refreshToken', 'tokenExpiresAt', 'userId', 'userEmail',
                 ]);
-                // Clear delta-sync state so the next sign-in starts with a full first sync
                 await chrome.storage.local.remove([
                     'lastSyncedAt', 'tabsSnapshot', 'bookmarksSnapshot', 'lastHistorySyncedAt',
-                    'tabsCache', 'bookmarksCache',
+                    'tabsCache', 'bookmarksCache', 'subscription',
+                    'persistentDeviceId',
+                    'remoteBookmarksRootId', 'remoteBookmarkFolderMap', 'remoteBookmarkNodeMap',
+                    'remoteBookmarkApplyMuteUntil', 'historyQueue',
+                    'lastAuthStage', 'lastAuthAt', 'lastAuthError', 'lastAuthStatus',
+                    'lastAuthResponse', 'lastAuthExceptionName', 'lastAuthExceptionStack',
                 ]);
+
+                // ── Call Native Bridge to clear Safari extension storage ──
+                if (self.TablicateNativeBridge) {
+                    try {
+                        await self.TablicateNativeBridge.send('CLEAR_ALL_DATA');
+                    } catch (err) {
+                        console.error('Native clear data failed', err);
+                    }
+                }
+
+                // ── 3. Purge E2EE keys from IndexedDB ──
+                try { await deleteKey('symmetricKey'); } catch (_) {}
+                try { await deleteKey('grantedSymmetricKey'); } catch (_) {}
+                try { await deleteKey('asymmetricPrivateKey'); } catch (_) {}
+                try { await deleteKey('asymmetricPublicKey'); } catch (_) {}
+
+                // ── 4. Reset in-memory caches ──
                 allTabsCache = [];
                 allBookmarksCache = [];
                 lastSyncedAt = null;
                 tabsSnapshot = {};
                 bookmarksSnapshot = {};
+
+                // ── 5. Respond immediately so the popup can update the UI ──
                 sendResponse({ status: 'success' });
+
+                // ── 6. Fire-and-forget server-side session revocation ──
+                if (accessToken) signOut(accessToken).catch(() => {});
             } else if (request.type === 'CLEAR_TABS_CACHE') {
                 await chrome.storage.local.remove(['tabsCache', 'tabsSnapshot', 'lastSyncedAt']);
                 allTabsCache = [];
@@ -1793,6 +1952,85 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 bookmarksSnapshot = {};
                 lastSyncedAt = null;
                 sendResponse({ status: 'success' });
+            } else if (request.type === 'CLEAR_ALL_DATA') {
+                // ── Factory reset: wipe EVERYTHING ──
+                const { accessToken } = await chrome.storage.sync.get('accessToken');
+                clearTimeout(syncTimeout);
+                syncInFlightPromise = null;
+
+                const syncKeysToRemove = [
+                    'accessToken', 'refreshToken', 'tokenExpiresAt', 'userId', 'userEmail',
+                    'apiUrl', 'deviceName', 'os',
+                ];
+                const localKeysToRemove = [
+                    'lastSyncedAt', 'tabsSnapshot', 'bookmarksSnapshot', 'lastHistorySyncedAt',
+                    'tabsCache', 'bookmarksCache', 'subscription',
+                    'persistentDeviceId',
+                    'remoteBookmarksRootId', 'remoteBookmarkFolderMap', 'remoteBookmarkNodeMap',
+                    'remoteBookmarkApplyMuteUntil', 'historyQueue',
+                    'lastAuthStage', 'lastAuthAt', 'lastAuthError', 'lastAuthStatus',
+                    'lastAuthResponse', 'lastAuthExceptionName', 'lastAuthExceptionStack',
+                ];
+
+                const resetResults = await Promise.allSettled([
+                    chrome.storage.sync.clear().catch(() => chrome.storage.sync.remove(syncKeysToRemove)),
+                    chrome.storage.local.clear().catch(() => chrome.storage.local.remove(localKeysToRemove)),
+                    clearAllKeys(),
+                ]);
+                
+                if (self.TablicateNativeBridge) {
+                    try {
+                        await self.TablicateNativeBridge.send('CLEAR_ALL_DATA');
+                    } catch (err) {
+                        console.error('Native clear data failed', err);
+                    }
+                }
+
+                const resetFailed = resetResults.some(r => r.status === 'rejected');
+
+                // Reset all in-memory caches
+                allTabsCache = [];
+                allBookmarksCache = [];
+                lastSyncedAt = null;
+                tabsSnapshot = {};
+                bookmarksSnapshot = {};
+
+                // Best-effort server-side revoke after local wipe.
+                if (accessToken) signOut(accessToken).catch(() => {});
+
+                if (resetFailed) {
+                    console.error('[reset] Partial reset failure during CLEAR_ALL_DATA.');
+                    sendResponse({ status: 'error', message: 'Failed to fully clear all data.' });
+                } else {
+                    console.log('[reset] All data cleared (factory reset).');
+                    sendResponse({ status: 'success' });
+                }
+            } else if (request.type === 'GET_SUBSCRIPTION') {
+                const { subscription } = await chrome.storage.local.get('subscription');
+                sendResponse(subscription || { tier: 'free', status: 'active', limits: {} });
+            } else if (request.type === 'FETCH_SUBSCRIPTION') {
+                // Force-fetch subscription from backend
+                try {
+                    const { apiUrl } = await chrome.storage.sync.get(['apiUrl']);
+                    const token = await getValidAccessToken();
+                    if (apiUrl && token) {
+                        const subRes = await fetch(new URL('/api/subscription', apiUrl).href, {
+                            headers: { 'Authorization': `Bearer ${token}` },
+                        });
+                        if (subRes.ok) {
+                            const subData = await subRes.json();
+                            await chrome.storage.local.set({ subscription: subData });
+                            sendResponse(subData);
+                        } else {
+                            sendResponse({ tier: 'free', status: 'active', limits: {} });
+                        }
+                    } else {
+                        sendResponse({ tier: 'free', status: 'active', limits: {} });
+                    }
+                } catch (e) {
+                    console.error('Failed to fetch subscription:', e);
+                    sendResponse({ tier: 'free', status: 'active', limits: {} });
+                }
             } else if (request.type === 'STORE_KEY') {
                 await saveKey(request.key);
                 let forceRefresh = { status: 'success' };

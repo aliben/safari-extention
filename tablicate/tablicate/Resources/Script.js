@@ -20,3 +20,48 @@ function openPreferences() {
 }
 
 document.querySelector("button.open-preferences").addEventListener("click", openPreferences);
+
+// ── Clear Extension Storage ────────────────────────────────────────────────
+const clearBtn        = document.querySelector("button.clear-storage");
+const confirmBtn      = document.querySelector("button.clear-storage-confirm");
+const cancelBtn       = document.querySelector("button.clear-storage-cancel");
+const clearStatus     = document.querySelector("p.clear-status");
+
+clearBtn.addEventListener("click", () => {
+    clearBtn.style.display    = "none";
+    confirmBtn.style.display  = "";
+    cancelBtn.style.display   = "";
+    clearStatus.textContent   = "All saved tabs, bookmarks, login session and encryption keys will be erased.";
+    clearStatus.className     = "clear-status warn";
+});
+
+cancelBtn.addEventListener("click", () => {
+    confirmBtn.style.display  = "none";
+    cancelBtn.style.display   = "none";
+    clearBtn.style.display    = "";
+    clearStatus.textContent   = "";
+    clearStatus.className     = "clear-status";
+});
+
+confirmBtn.addEventListener("click", () => {
+    confirmBtn.disabled      = true;
+    cancelBtn.disabled       = true;
+    clearStatus.textContent  = "Clearing\u2026";
+    clearStatus.className    = "clear-status";
+    webkit.messageHandlers.controller.postMessage("clear-storage");
+});
+
+// Called back by Swift after the clear operation completes
+function onClearStorageResult(success, message) {
+    confirmBtn.style.display  = "none";
+    cancelBtn.style.display   = "none";
+    confirmBtn.disabled       = false;
+    cancelBtn.disabled        = false;
+    clearBtn.style.display    = "";
+    clearStatus.textContent   = message;
+    clearStatus.className     = "clear-status " + (success ? "success" : "error");
+    setTimeout(() => {
+        clearStatus.textContent = "";
+        clearStatus.className   = "clear-status";
+    }, 4000);
+}
