@@ -1473,13 +1473,39 @@ async function toggleSpotlight() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
 
-    // Open spotlight immediately — shows cached results right away
-    try {
-        await chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_SPOTLIGHT" });
-    } catch (err) {
-        console.log("Content script not injected yet, injecting now.");
-        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
-        await chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_SPOTLIGHT" });
+    // Helper: send TOGGLE_SPOTLIGHT and return true only if we get a valid response
+    const trySend = (tabId) =>
+        new Promise((resolve) => {
+            try {
+                chrome.tabs.sendMessage(tabId, { type: "TOGGLE_SPOTLIGHT" }, (resp) => {
+                    // In Safari the callback may fire with undefined response and
+                    // a lastError when the content-script context has been torn down.
+                    if (chrome.runtime.lastError || !resp) {
+                        resolve(false);
+                    } else {
+                        resolve(true);
+                    }
+                });
+            } catch (_) {
+                resolve(false);
+            }
+        });
+
+    // 1️⃣  Try talking to an already-injected content script
+    let ok = await trySend(tab.id);
+
+    // 2️⃣  If that failed, (re-)inject the content script and try once more
+    if (!ok) {
+        try {
+            await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+        } catch (injectErr) {
+            console.warn('Could not inject content script:', injectErr);
+            return;
+        }
+        ok = await trySend(tab.id);
+        if (!ok) {
+            console.warn('Content script still unreachable after re-injection.');
+        }
     }
 
     // Sync in background; notify spotlight to refresh when done

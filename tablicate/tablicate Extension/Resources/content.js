@@ -1,5 +1,9 @@
 
 (() => {
+  // Guard against duplicate injection (Safari may re-inject the content script)
+  if (window.__tablicateContentScriptLoaded) return;
+  window.__tablicateContentScriptLoaded = true;
+
   const IFRAME_ID = 'tabsync-spotlight-iframe';
   let isSpotlightVisible = false;
 
