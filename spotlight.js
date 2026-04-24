@@ -25,6 +25,30 @@ document.addEventListener('DOMContentLoaded', () => {
     let sendPanelActiveItem = null;
     let cachedSubscription = null;
 
+    function resolveParentOrigin() {
+        const ancestorOrigin = window.location.ancestorOrigins && window.location.ancestorOrigins.length > 0
+            ? window.location.ancestorOrigins[0]
+            : null;
+        if (ancestorOrigin) return ancestorOrigin;
+        try {
+            return new URL(document.referrer).origin;
+        } catch {
+            return null;
+        }
+    }
+
+    const parentOrigin = resolveParentOrigin();
+
+    function postToParent(message) {
+        if (!parentOrigin) return;
+        window.parent.postMessage(message, parentOrigin);
+    }
+
+    function isTrustedParentMessage(event) {
+        if (event.source !== window.parent) return false;
+        return Boolean(parentOrigin && event.origin === parentOrigin);
+    }
+
     // ── Subscription / Tier helpers ────────────────────────────────────
     function fetchSubscription(cb) {
         chrome.runtime.sendMessage({ type: 'FETCH_SUBSCRIPTION' }, (sub) => {
@@ -81,7 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function closeSpotlight() {
-        window.parent.postMessage({ type: 'CLOSE_SPOTLIGHT' }, '*');
+        postToParent({ type: 'CLOSE_SPOTLIGHT' });
     }
 
     function performSearch() {
@@ -607,7 +631,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (selectedIndex > -1 && items[selectedIndex]) {
                 const urlToCopy = items[selectedIndex].dataset.url;
                 if (!urlToCopy) return;
-                window.parent.postMessage({ type: 'COPY_TEXT', text: urlToCopy }, '*');
+                postToParent({ type: 'COPY_TEXT', text: urlToCopy });
                 
                 // Show feedback
                 const feedback = document.createElement('div');
@@ -635,6 +659,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     window.addEventListener('message', (event) => {
+        if (!isTrustedParentMessage(event)) return;
+
         // Handle sync completion — refresh results and hide spinner
         if (event.data.type === 'SYNC_COMPLETE') {
             performSearch();
@@ -677,6 +703,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Listen for the parent frame telling us to take focus (Safari workaround)
     window.addEventListener('message', (event) => {
+        if (!isTrustedParentMessage(event)) return;
+
         if (event.data && event.data.type === 'FOCUS_INPUT') {
             searchInput.focus();
         }

@@ -292,10 +292,27 @@ document.addEventListener('DOMContentLoaded', () => {
         backendUrlLink.onclick = () => chrome.tabs.create({ url: url + '/settings' });
     }
 
+    function normalizeApiUrl(rawUrl) {
+        let parsed;
+        try {
+            parsed = new URL(rawUrl.trim());
+        } catch {
+            return { error: 'Please enter a valid URL.' };
+        }
+
+        const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+        if (!isLocalhost && parsed.protocol !== 'https:') {
+            return { error: 'Only HTTPS URLs are allowed (except localhost).' };
+        }
+
+        const pathname = parsed.pathname.replace(/\/$/, '');
+        return { url: `${parsed.origin}${pathname}` };
+    }
+
     // ── Step 1: URL ────────────────────────────────────────────────────────
     saveUrlBtn.addEventListener('click', () => {
-        const url = apiUrlInput.value.trim().replace(/\/$/, '');
-        if (!url) { urlStatusEl.textContent = 'Please enter a valid URL.'; return; }
+        const { url, error } = normalizeApiUrl(apiUrlInput.value);
+        if (!url) { urlStatusEl.textContent = error; return; }
         chrome.storage.sync.set({ apiUrl: url }, () => {
             setBackendLink(url);
             urlStatusEl.textContent = '';

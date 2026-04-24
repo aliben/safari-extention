@@ -5,6 +5,7 @@
   window.__tablicateContentScriptLoaded = true;
 
   const IFRAME_ID = 'tabsync-spotlight-iframe';
+  const SPOTLIGHT_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '');
   let isSpotlightVisible = false;
 
   function toggleSpotlight() {
@@ -35,7 +36,7 @@
         iframe.contentWindow.focus();
         // Safari doesn't auto-focus elements inside cross-origin iframes;
         // tell the spotlight page to focus its search input explicitly.
-        iframe.contentWindow.postMessage({ type: 'FOCUS_INPUT' }, '*');
+        iframe.contentWindow.postMessage({ type: 'FOCUS_INPUT' }, SPOTLIGHT_ORIGIN);
       };
       isSpotlightVisible = true;
     }
@@ -61,12 +62,12 @@
     } else if (request.type === 'TRIGGER_FAVORITE') {
         const iframe = document.getElementById(IFRAME_ID);
         if (iframe && iframe.contentWindow) {
-            iframe.contentWindow.postMessage({ type: 'ADD_TO_FAVORITES_COMMAND' }, '*');
+        iframe.contentWindow.postMessage({ type: 'ADD_TO_FAVORITES_COMMAND' }, SPOTLIGHT_ORIGIN);
         }
     } else if (request.type === 'SYNC_COMPLETE') {
         const iframe = document.getElementById(IFRAME_ID);
         if (iframe && iframe.contentWindow) {
-            iframe.contentWindow.postMessage({ type: 'SYNC_COMPLETE' }, '*');
+        iframe.contentWindow.postMessage({ type: 'SYNC_COMPLETE' }, SPOTLIGHT_ORIGIN);
         }
         sendResponse({ status: 'done' });
     }
@@ -77,7 +78,7 @@
   window.addEventListener('message', (event) => {
     // Basic security check
     const iframe = document.getElementById(IFRAME_ID);
-    if (!iframe || event.source !== iframe.contentWindow) {
+    if (!iframe || event.source !== iframe.contentWindow || event.origin !== SPOTLIGHT_ORIGIN) {
       return;
     }
 
@@ -91,7 +92,7 @@
         if (event.data.text) {
             navigator.clipboard.writeText(event.data.text).then(() => {
                 // Optionally send confirmation back to iframe
-                event.source.postMessage({ type: 'COPY_SUCCESS' }, event.origin);
+          event.source.postMessage({ type: 'COPY_SUCCESS' }, SPOTLIGHT_ORIGIN);
             }).catch(err => console.error('Failed to copy text:', err));
         }
     }
